@@ -19,6 +19,15 @@ QUERY_NAMES = (
     "resolve_synonym.sql",
     "object_catalog.sql",
     "tab_columns.sql",
+    # Irmas em lote das queries por-objeto acima (contrato
+    # oracle-depgraph-scale): mesma projecao mais a coluna que identifica o
+    # objeto de origem, restringidas por :object_list. Existem para a BFS por
+    # nivel -- sem elas, um grafo de 20 mil objetos faz 20 mil idas ao banco.
+    # As versoes por-objeto continuam registradas e em uso: sao o caminho de
+    # fallback quando o extractor nao implementa os metodos batch.
+    "deps_direct_batch.sql",
+    "plscope_statements_batch.sql",
+    "fetch_source_batch.sql",
 )
 
 

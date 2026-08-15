@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from . import db, queries
 
@@ -51,6 +51,19 @@ class PlscopeStatementRow:
 
 
 @dataclass
+class PlscopeStatementBatchRow:
+    # Irma em lote de PlscopeStatementRow (contrato oracle-depgraph-scale,
+    # T-01): mesmos campos, mais object_name para reagrupar por objeto de
+    # origem depois do fetch em lote (plscope_statements_batch.sql).
+    object_name: str
+    line: int
+    stmt_type: str
+    sql_id: Optional[str]
+    has_into_record: Optional[str]
+    text: Optional[str]
+
+
+@dataclass
 class FetchSourceRow:
     type: str
     line: int
@@ -58,7 +71,27 @@ class FetchSourceRow:
 
 
 @dataclass
+class FetchSourceBatchRow:
+    # Irma em lote de FetchSourceRow: mesmos campos, mais name (fetch_source_batch.sql).
+    name: str
+    type: str
+    line: int
+    text: str
+
+
+@dataclass
 class DepsDirectRow:
+    referenced_owner: str
+    referenced_name: str
+    referenced_type: str
+    dependency_type: str
+
+
+@dataclass
+class DepsDirectBatchRow:
+    # Irma em lote de DepsDirectRow: mesmos campos, mais name (o objeto de
+    # origem de cada linha -- deps_direct_batch.sql).
+    name: str
     referenced_owner: str
     referenced_name: str
     referenced_type: str
@@ -134,6 +167,64 @@ class TabColumnRow:
 
 def _to_kwargs(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key.lower(): value for key, value in row.items()}
+
+
+# ---------------------------------------------------------- queries batch
+#
+# As tres queries batch (contrato oracle-depgraph-scale, T-01) sao carregadas
+# pelo MESMO registro central de todas as outras (queries.QUERY_NAMES /
+# QUERY_TEXT) -- nada de loader paralelo aqui: um segundo caminho de
+# carregamento significaria duas regras de validacao, e uma query com nome
+# errado falharia so em runtime em vez de na importacao do modulo.
+
+# Bind :object_list e VARCHAR2 -- uma lista de nomes longa demais estoura o
+# limite do bind. 200 nomes fica bem folgado abaixo disso (nome de objeto
+# Oracle raramente passa de umas poucas dezenas de bytes) e mantem a
+# consulta com um plano de execucao plano e estavel -- uma string enorme
+# dentro do INSTR tambem degrada. Quem fatia a lista de nomes em chunks e o
+# CHAMADOR (BFS por nivel / enriquecimento em lote, T-02/T-03, fora desta
+# tarefa); a constante mora aqui, junto dos fetchers que ela limita.
+BATCH_CHUNK_SIZE = 200
+
+
+def chunk_names(names: Iterable[str], size: int = BATCH_CHUNK_SIZE) -> List[str]:
+    """Normaliza `names` (maiusculas, sem espaco nas pontas, sem entrada
+    vazia, sem duplicata, ordenado) e devolve os pedacos ja prontos para o
+    bind `:object_list` -- cada pedaco e uma unica string `'A,B,C'` com no
+    maximo `size` nomes.
+
+    Ordenacao e deduplicacao sao deliberadas: este projeto e
+    byte-deterministico, e o mesmo conjunto de nomes (em qualquer ordem de
+    entrada) tem que produzir sempre os mesmos chunks."""
+    unique_sorted = sorted({n.strip().upper() for n in names if n and n.strip()})
+    return [
+        ",".join(unique_sorted[i : i + size])
+        for i in range(0, len(unique_sorted), size)
+    ]
+
+
+def fetch_deps_direct_batch(
+    conn, owner: str, object_list: Optional[str]
+) -> List[DepsDirectBatchRow]:
+    binds = {"owner": owner, "object_list": object_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["deps_direct_batch.sql"], binds)
+    return [DepsDirectBatchRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_plscope_statements_batch(
+    conn, owner: str, object_list: Optional[str]
+) -> List[PlscopeStatementBatchRow]:
+    binds = {"owner": owner, "object_list": object_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["plscope_statements_batch.sql"], binds)
+    return [PlscopeStatementBatchRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_source_batch(
+    conn, owner: str, object_list: Optional[str], object_type: Optional[str] = None
+) -> List[FetchSourceBatchRow]:
+    binds = {"owner": owner, "object_list": object_list, "object_type": object_type}
+    rows = db.run_query(conn, queries.QUERY_TEXT["fetch_source_batch.sql"], binds)
+    return [FetchSourceBatchRow(**_to_kwargs(row)) for row in rows]
 
 
 def fetch_resolve_target(

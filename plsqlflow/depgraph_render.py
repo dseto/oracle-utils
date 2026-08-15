@@ -230,17 +230,26 @@ def _render_dynsql_lines(outbound: Sequence[DepEdge], snippets: Dict[str, str]) 
 
 def render_node_md(
     node: DepNode,
-    edges: Sequence[DepEdge],
+    outbound: Sequence[DepEdge],
+    inbound: Sequence[DepEdge],
     nodes_by_ref: Dict[str, DepNode],
     snippets: Dict[str, str],
 ) -> str:
     """Monta o texto de `nodes/<OWNER>.<OBJETO>.md` -- secoes na ordem
     EXATA do plano (secao 5): Chama / Chamado por / Tabelas acessadas /
     Colunas / Triggers ativados / SQL Dinamico. Secao vazia e omitida
-    (cabecalho incluso)."""
+    (cabecalho incluso).
+
+    T-04 (escala): `outbound`/`inbound` chegam JA FILTRADOS pra este no --
+    `render_graph` indexa `result.edges` uma unica vez (`from_ref ->
+    [aresta]`, `to_ref -> [aresta]`) em vez de varrer a lista inteira a
+    cada chamada (O(nos) chamadas x O(arestas) por chamada = O(nos x
+    arestas), minutos de CPU num grafo de 20 mil nos / 200 mil arestas).
+    Unico chamador no repo e `render_graph`; a assinatura mudou de
+    `edges: Sequence[DepEdge]` pra `outbound`/`inbound` separados porque
+    filtrar aqui dentro exigiria receber a lista inteira de novo,
+    reintroduzindo o custo quadratico que esta mudanca elimina."""
     ref = _ref(node)
-    outbound = [e for e in edges if e.from_ref == ref]
-    inbound = [e for e in edges if e.to_ref == ref]
 
     sections: List[Tuple[str, List[str]]] = [
         ("## Chama (outbound)", _render_call_out_lines(ref, outbound)),
@@ -462,11 +471,36 @@ def render_graph(
         nodes_dir.mkdir(parents=True, exist_ok=True)
 
     nodes_by_ref = {_ref(n): n for n in result.nodes}
+
+    # Indice de arestas (T-04, escala): duas passadas sobre `result.edges`
+    # em vez de uma varredura por no. `dict.setdefault(...).append(...)`
+    # preserva a ordem de chegada de `result.edges` (que ja chega ordenado
+    # de `to_result()`) -- isso importa porque os `sorted(...)` estaveis
+    # dentro de `_render_call_out_lines`/`_render_table_access_lines`/etc.
+    # dependem da ordem relativa de entrada pra desempatar chaves iguais;
+    # reordenar aqui mudaria bytes do node .md pra arestas empatadas.
+    # `to_ref`/`from_ref` que nao correspondem a nenhum no do grafo
+    # (UNKNOWN_TARGET = "?", emitido por depgraph_enrich quando o SQL
+    # dinamico nao resolve o alvo) simplesmente nunca sao consultados --
+    # nao ha KeyError porque o acesso abaixo usa `.get(ref, [])`.
+    outbound_by_ref: Dict[str, List[DepEdge]] = {}
+    inbound_by_ref: Dict[str, List[DepEdge]] = {}
+    for e in result.edges:
+        outbound_by_ref.setdefault(e.from_ref, []).append(e)
+        inbound_by_ref.setdefault(e.to_ref, []).append(e)
+
     written: List[Path] = []
 
     for node in result.nodes:
+        ref = _ref(node)
         path = nodes_dir / node_filename(node.owner, node.object_name)
-        text = render_node_md(node, result.edges, nodes_by_ref, result.snippets)
+        text = render_node_md(
+            node,
+            outbound_by_ref.get(ref, []),
+            inbound_by_ref.get(ref, []),
+            nodes_by_ref,
+            result.snippets,
+        )
         _write_text(path, text)
         written.append(path)
 
