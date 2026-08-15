@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-02",
+  "contract": "plsql-flow",
+  "desc": "Usuário invoca /plsql-flow com procedure+parâmetros e recebe diagrama mermaid do caminho completo, com casos complexos marcados e proteção anti-loop",
+  "files": [
+    ".claude/skills/plsql-flow/SKILL.md",
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsql_flow.py -q -k skill_doc",
+  "recorded_at": "2026-08-15T10:44:24.504369+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:bc954408b06f4d66d93484c4990497b16be8a2dfbe1d032f22191bd7318e39ea"
+}

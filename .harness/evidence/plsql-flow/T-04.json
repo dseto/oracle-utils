@@ -1,0 +1,15 @@
+{
+  "feature_id": "T-04",
+  "contract": "plsql-flow",
+  "desc": "Usuário pode ativar modo dinâmico (DBMS_HPROF) e ver o caminho realmente executado sobreposto ao grafo estático",
+  "files": [
+    "sql/flow/hprof_setup.sql",
+    "sql/flow/hprof_report.sql",
+    ".claude/skills/plsql-flow/SKILL.md",
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsql_flow.py -q -k hprof",
+  "recorded_at": "2026-08-15T10:44:22.662542+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:415d40dafc94031f5ba562cb22ed407a391327e7934484f4fa83840e0dfccf03"
+}
