@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import oracledb
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "tools" / "flow-connections.json"
 
