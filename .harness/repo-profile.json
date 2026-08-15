@@ -18,7 +18,7 @@
   },
   "test_glob": {
     "value": "tests/**/*.py",
-    "evidence": "tests/test_conventions.py",
+    "evidence": "tests/conftest.py",
     "confidence": 1.0
   },
   "extras": {
@@ -38,7 +38,7 @@
     }
   },
   "unknowns": [],
-  "analyzed_at": "2026-08-15T11:38:41.886970+00:00",
+  "analyzed_at": "2026-08-15T13:42:30.028674+00:00",
   "manifest_snapshot": {
     "pyproject.toml": "fbf2de5c4099f0c368710a70aa781d7d037cac599c9c1a0a7c7321725ce225e7"
   }

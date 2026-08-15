@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-04",
+  "contract": "oracle-depgraph",
+  "desc": "Triggers das tabelas escritas entram no grafo com suas proprias dependencias, e regerar o grafo contra o mesmo banco produz arquivos identicos byte a byte",
+  "files": [
+    "plsqlflow/depgraph.py",
+    "plsqlflow/depgraph_render.py",
+    "tests/test_depgraph_triggers.py",
+    "tests/test_depgraph_render.py",
+    "tests/fixtures/depgraph_golden/"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_triggers.py tests/test_depgraph_render.py -q",
+  "recorded_at": "2026-08-15T14:49:19.305953+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:9b708236dbe8df0b1aafda202485dec54b8044df9eb30922de751533cffde71c"
+}

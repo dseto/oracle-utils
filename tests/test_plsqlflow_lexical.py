@@ -173,3 +173,63 @@ def test_scan_candidates_confidence_for_known_and_unknown_calls():
     assert unknown_call.confidence == "heuristic"
     assert unknown_call.confirmed is False
     assert unknown_call.line == 7
+
+
+# ------------------------------------------------- lexical.py: modo fragmento SQL (T-03)
+
+SQL_FRAGMENT_BLOCK = [
+    "  SELECT a.id, b.val\n",
+    "    FROM tabela_a a\n",
+    "    JOIN esquema.tabela_b b ON b.id = a.id\n",
+    "   WHERE a.id > 0;\n",
+    "  -- FROM tabela_comentada nao deve aparecer\n",
+    "  v_txt := 'FROM tabela_string_literal';\n",
+    "  INSERT INTO owner_x.tabela_c (col1) VALUES (1);\n",
+    "  UPDATE tabela_d SET col1 = 1 WHERE id = 1;\n",
+    "  MERGE INTO tabela_e e USING tabela_f f ON (e.id = f.id);\n",
+]
+
+
+def _object_ref_names(clean_lines):
+    return [(name.upper(), line) for name, line in lexical.find_object_reference_candidates(clean_lines)]
+
+
+def test_find_object_reference_candidates_after_from_join_into_update():
+    clean_lines, _ = lexical.strip_comments_and_literals(SQL_FRAGMENT_BLOCK)
+    refs = _object_ref_names(clean_lines)
+
+    assert ("TABELA_A", 2) in refs
+    assert ("ESQUEMA.TABELA_B", 3) in refs
+    assert ("OWNER_X.TABELA_C", 7) in refs
+    assert ("TABELA_D", 8) in refs
+    assert ("TABELA_E", 9) in refs
+
+
+def test_find_object_reference_candidates_captures_qualified_owner_table_as_one_unit():
+    clean_lines, _ = lexical.strip_comments_and_literals(SQL_FRAGMENT_BLOCK)
+    refs = _object_ref_names(clean_lines)
+
+    names = [name for name, _ in refs]
+    assert "ESQUEMA.TABELA_B" in names
+    # nao deve fragmentar em "ESQUEMA" isolado
+    assert "ESQUEMA" not in names
+    assert "OWNER_X.TABELA_C" in names
+    assert "OWNER_X" not in names
+
+
+def test_find_object_reference_candidates_ignores_comments_and_string_literals():
+    clean_lines, _ = lexical.strip_comments_and_literals(SQL_FRAGMENT_BLOCK)
+    refs = _object_ref_names(clean_lines)
+
+    names = [name for name, _ in refs]
+    assert "TABELA_COMENTADA" not in names
+    assert "TABELA_STRING_LITERAL" not in names
+
+
+def test_find_object_reference_candidates_on_raw_lines_without_stripping_would_leak():
+    # Confirma que a limpeza previa (strip_comments_and_literals) e o que
+    # protege contra falso positivo -- sem ela, comentario/literal vazam.
+    refs = _object_ref_names(SQL_FRAGMENT_BLOCK)
+    names = [name for name, _ in refs]
+    assert "TABELA_COMENTADA" in names
+    assert "TABELA_STRING_LITERAL" in names

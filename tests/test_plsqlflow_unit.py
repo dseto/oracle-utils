@@ -24,8 +24,18 @@ def load_fixture() -> Dict[str, Any]:
 
 # --------------------------------------------------------------- queries.py
 
-def test_all_ten_queries_load_non_empty():
-    assert len(queries.QUERY_NAMES) == 10
+def test_all_queries_load_non_empty():
+    # Contagem fixa era fragil: o contrato oracle-depgraph acrescentou
+    # object_catalog.sql/tab_columns.sql a QUERY_NAMES. O que importa e que
+    # as 10 queries originais do plsql-flow continuem registradas e que
+    # TODA query registrada carregue do disco com conteudo.
+    originais = {
+        "resolve_target.sql", "plscope_check.sql", "plscope_calls.sql",
+        "plscope_statements.sql", "fetch_source.sql", "deps_direct.sql",
+        "triggers_for_tables.sql", "fk_cascade.sql", "type_hierarchy.sql",
+        "resolve_synonym.sql",
+    }
+    assert originais <= set(queries.QUERY_NAMES)
     for name in queries.QUERY_NAMES:
         text = queries.QUERY_TEXT[name]
         assert text.strip(), "{} carregou vazio".format(name)

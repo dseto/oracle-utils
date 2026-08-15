@@ -1,6 +1,6 @@
 {
-  "contract": "plsqlflow-py",
-  "compiled_at": "2026-08-15T12:40:45.800238+00:00",
+  "contract": "oracle-depgraph",
+  "compiled_at": "2026-08-15T15:10:21.329133+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
@@ -8,36 +8,37 @@
       "3 falhas consecutivas do mesmo verify_cmd sem progresso",
       "python-oracledb nao conecta no dev (localhost:1521/XEPDB1) apos 2 tentativas de diagnostico",
       "fixture FLOW_DEMO ausente/invalida no dev e recriacao exigiria DDL nao autorizado",
-      "qualquer necessidade de DML/DDL no banco alem da ja autorizada (fixture FLOW_DEMO existente)"
+      "qualquer necessidade de DML/DDL no banco (o contrato e 100% somente-leitura)",
+      "necessidade de alterar plsqlflow/graph.py, mermaid.py ou report.py (modulos congelados por golden test de outro contrato)"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura",
+      "desc": "Catalogo de objetos e colunas de tabela ficam disponiveis ao extrator, com data de ultimo DDL para detectar grafo desatualizado",
       "files": [
-        "plsqlflow/__init__.py",
-        "plsqlflow/db.py",
+        "sql/flow/object_catalog.sql",
+        "sql/flow/tab_columns.sql",
         "plsqlflow/queries.py",
         "plsqlflow/extract.py",
-        "tests/test_plsqlflow_unit.py",
-        "tests/conftest.py"
+        "plsqlflow/depgraph.py",
+        "tests/test_depgraph_unit.py",
+        "tests/test_plsqlflow_unit.py"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_unit.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_unit.py tests/test_conventions.py -q",
       "depends": [],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-02",
-      "desc": "Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos",
+      "desc": "Percorrer as dependencias a partir da raiz visita cada objeto uma unica vez, para nas fronteiras do sistema e avisa quando atinge o limite de tamanho em vez de truncar calado",
       "files": [
-        "plsqlflow/resolve.py",
-        "plsqlflow/graph.py",
-        "tests/test_plsqlflow_graph.py",
-        "tests/fixtures/flow_demo_extract.json"
+        "plsqlflow/depgraph.py",
+        "tests/test_depgraph_bfs.py",
+        "tests/fixtures/depgraph_extract.json"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_graph.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_bfs.py -q",
       "depends": [
         "T-01"
       ],
@@ -46,13 +47,14 @@
     },
     {
       "id": "T-03",
-      "desc": "SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca",
+      "desc": "Cada acesso a tabela vira aresta de leitura ou escrita com linha do fonte, e todo SQL dinamico aparece classificado como resolvido, parcial ou opaco",
       "files": [
-        "plsqlflow/dynsql.py",
+        "plsqlflow/depgraph_enrich.py",
         "plsqlflow/lexical.py",
+        "tests/test_depgraph_enrich.py",
         "tests/test_plsqlflow_lexical.py"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_lexical.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_enrich.py tests/test_plsqlflow_lexical.py -q",
       "depends": [
         "T-01"
       ],
@@ -61,16 +63,15 @@
     },
     {
       "id": "T-04",
-      "desc": "Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file",
+      "desc": "Triggers das tabelas escritas entram no grafo com suas proprias dependencias, e regerar o grafo contra o mesmo banco produz arquivos identicos byte a byte",
       "files": [
-        "plsqlflow/mermaid.py",
-        "plsqlflow/report.py",
-        "plsqlflow/cli.py",
-        "plsqlflow/__main__.py",
-        "tests/test_plsqlflow_golden.py",
-        "tests/fixtures/flow_demo_golden.mmd"
+        "plsqlflow/depgraph.py",
+        "plsqlflow/depgraph_render.py",
+        "tests/test_depgraph_triggers.py",
+        "tests/test_depgraph_render.py",
+        "tests/fixtures/depgraph_golden/"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_golden.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_triggers.py tests/test_depgraph_render.py -q",
       "depends": [
         "T-02",
         "T-03"
@@ -80,14 +81,38 @@
     },
     {
       "id": "T-05",
-      "desc": "Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev",
+      "desc": "Gerar o grafo pela linha de comando funciona sem quebrar o uso atual do pacote, nunca recebe senha por argumento e sinaliza cada situacao com um codigo de saida proprio",
       "files": [
-        ".claude/skills/plsql-flow/SKILL.md",
-        "tests/test_plsqlflow_skill.py"
+        "plsqlflow/cli.py",
+        "tests/test_depgraph_cli.py",
+        "sql/flow/triggers_any_status.sql",
+        "plsqlflow/queries.py",
+        "plsqlflow/extract.py"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_skill.py -q -rs",
+      "verify_cmd": "pytest tests/test_depgraph_cli.py -q",
       "depends": [
         "T-04"
+      ],
+      "cwd": null,
+      "passes": true
+    },
+    {
+      "id": "T-06",
+      "desc": "O assistente sabe consultar o grafo por grep antes de reabrir conexao, e as skills e agentes existentes apontam para ele",
+      "files": [
+        ".claude/skills/oracle-dependency-graph/SKILL.md",
+        ".claude/skills/dep-graph/SKILL.md",
+        ".claude/skills/plsql-flow/SKILL.md",
+        ".claude/skills/plsql-review/SKILL.md",
+        ".claude/agents/oracle-dba.md",
+        ".gitignore",
+        "tests/test_depgraph_skill.py",
+        "tests/test_plsql_flow.py",
+        "tests/conftest.py"
+      ],
+      "verify_cmd": "pytest -q -rs",
+      "depends": [
+        "T-05"
       ],
       "cwd": null,
       "passes": true

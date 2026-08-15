@@ -1,0 +1,12 @@
+# O golden do /oracle-dependency-graph e comparado BYTE A BYTE contra o que
+# depgraph_render.py grava (sempre newline="\n"). Com core.autocrlf=true no
+# Windows, o checkout converteria estes arquivos para CRLF e o teste de
+# idempotencia quebraria num clone novo -- falha invisivel na maquina onde o
+# arquivo foi gerado. -text desliga qualquer conversao de fim de linha.
+tests/fixtures/depgraph_golden/** -text
+
+# Mesma razao: fixture de dados lida/comparada por teste.
+tests/fixtures/*.json -text
+
+# Queries .sql sao lidas do disco e enviadas ao Oracle; manter LF estavel.
+sql/**/*.sql text eol=lf

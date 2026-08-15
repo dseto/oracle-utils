@@ -1,0 +1,9 @@
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "CALL", "from_ref": "GESTAO.FLOW_DEMO", "line": null, "op": null, "snippet_ref": null, "to_ref": "GESTAO.FLOW_DEMO_LOG"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": true, "edge_type": "DYNAMIC_SQL", "from_ref": "GESTAO.FLOW_DEMO", "line": 28, "op": null, "snippet_ref": "L1-L53", "to_ref": "GESTAO.FLOW_DEMO_LOG"}
+{"cols": null, "confidence": "partial", "context": null, "dynamic": true, "edge_type": "DYNAMIC_SQL", "from_ref": "GESTAO.FLOW_DEMO", "line": 31, "op": null, "snippet_ref": "L1-L53", "to_ref": "GESTAO.FLOW_DEMO_LOG"}
+{"cols": ["MSG"], "confidence": "exact", "context": null, "dynamic": false, "edge_type": "WRITE", "from_ref": "GESTAO.FLOW_DEMO", "line": 6, "op": "INSERT", "snippet_ref": null, "to_ref": "GESTAO.FLOW_DEMO_LOG"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "CALL", "from_ref": "GESTAO.FLOW_DEMO", "line": null, "op": null, "snippet_ref": null, "to_ref": "SYS.STANDARD"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "TRIGGER_FIRES", "from_ref": "GESTAO.FLOW_DEMO_LOG", "line": null, "op": "INSERT", "snippet_ref": null, "to_ref": "GESTAO.TRG_FLOW_DEMO_LOG"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "CALL", "from_ref": "GESTAO.TRG_FLOW_DEMO_LOG", "line": null, "op": null, "snippet_ref": null, "to_ref": "GESTAO.FLOW_DEMO_AUDIT"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "CALL", "from_ref": "GESTAO.TRG_FLOW_DEMO_LOG", "line": null, "op": null, "snippet_ref": null, "to_ref": "GESTAO.FLOW_DEMO_LOG"}
+{"cols": null, "confidence": "exact", "context": null, "dynamic": false, "edge_type": "CALL", "from_ref": "GESTAO.TRG_FLOW_DEMO_LOG", "line": null, "op": null, "snippet_ref": null, "to_ref": "SYS.STANDARD"}

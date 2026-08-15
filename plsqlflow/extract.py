@@ -106,6 +106,32 @@ class SynonymRow:
     db_link: Optional[str]
 
 
+@dataclass
+class ObjectCatalogRow:
+    owner: str
+    object_name: str
+    object_type: str
+    status: str
+    last_ddl_time: Any
+
+
+@dataclass
+class TabColumnRow:
+    owner: str
+    table_name: str
+    column_name: str
+    column_id: int
+    data_type: str
+    nullable: str
+    data_default: Optional[str]
+    # Precisao do tipo: sem eles o no de tabela renderiza "VARCHAR2" em vez de
+    # "VARCHAR2(200)" -- mesma informacao que sql/viz/erd_tables.sql ja traz.
+    data_length: Optional[int] = None
+    data_precision: Optional[int] = None
+    data_scale: Optional[int] = None
+    char_used: Optional[str] = None
+
+
 def _to_kwargs(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key.lower(): value for key, value in row.items()}
 
@@ -158,6 +184,17 @@ def fetch_triggers_for_tables(conn, owner: str, table_list: str) -> List[Trigger
     return [TriggerRow(**_to_kwargs(row)) for row in rows]
 
 
+def fetch_triggers_any_status(conn, owner: str, table_list: str) -> List[TriggerRow]:
+    """Mesma forma de `fetch_triggers_for_tables`, mas sem o filtro
+    `status = 'ENABLED'` -- usada pelo `plsqlflow depgraph` (T-05), que
+    precisa registrar triggers desabilitados como no do grafo (dependencia
+    estrutural real), diferente do modo flow (grao subprograma), que so
+    quer o que dispara em runtime."""
+    binds = {"owner": owner, "table_list": table_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["triggers_any_status.sql"], binds)
+    return [TriggerRow(**_to_kwargs(row)) for row in rows]
+
+
 def fetch_fk_cascade(conn, owner: str, table_name: str) -> List[FkCascadeRow]:
     binds = {"owner": owner, "table_name": table_name}
     rows = db.run_query(conn, queries.QUERY_TEXT["fk_cascade.sql"], binds)
@@ -174,3 +211,17 @@ def fetch_resolve_synonym(conn, owner: str, name: str) -> List[SynonymRow]:
     binds = {"owner": owner, "name": name}
     rows = db.run_query(conn, queries.QUERY_TEXT["resolve_synonym.sql"], binds)
     return [SynonymRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_object_catalog(
+    conn, owner: str, object_list: Optional[str] = None
+) -> List[ObjectCatalogRow]:
+    binds = {"owner": owner, "object_list": object_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["object_catalog.sql"], binds)
+    return [ObjectCatalogRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_tab_columns(conn, owner: str, table_list: str) -> List[TabColumnRow]:
+    binds = {"owner": owner, "table_list": table_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["tab_columns.sql"], binds)
+    return [TabColumnRow(**_to_kwargs(row)) for row in rows]

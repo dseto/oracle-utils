@@ -1,0 +1,46 @@
+{
+  "_note": "Linhas REAIS capturadas do dev (Oracle XE 21c local, schema GESTAO, fixture FLOW_DEMO) em 2026-08-15 via SQLcl MCP. Cobre os casos criticos da BFS: (a) dedup PACKAGE + PACKAGE BODY do mesmo objeto num no so; (b) SELF-LOOP real -- FLOW_DEMO PACKAGE BODY depende de GESTAO.FLOW_DEMO PACKAGE (a propria spec); (c) fronteira de parada SYS.STANDARD; (d) trigger TRG_FLOW_DEMO_LOG expandindo para 2 tabelas (re-injecao na BFS, Fase 4). Nao editar a mao: regravar so a partir do banco.",
+  "root": {
+    "owner": "GESTAO",
+    "object_name": "FLOW_DEMO",
+    "subprogram": "MAIN"
+  },
+  "object_catalog": [
+    {"OWNER": "GESTAO", "OBJECT_NAME": "FLOW_DEMO", "OBJECT_TYPE": "PACKAGE", "STATUS": "VALID", "LAST_DDL_TIME": "2026-08-15 10:20:48"},
+    {"OWNER": "GESTAO", "OBJECT_NAME": "FLOW_DEMO", "OBJECT_TYPE": "PACKAGE BODY", "STATUS": "VALID", "LAST_DDL_TIME": "2026-08-15 10:41:29"},
+    {"OWNER": "GESTAO", "OBJECT_NAME": "FLOW_DEMO_AUDIT", "OBJECT_TYPE": "TABLE", "STATUS": "VALID", "LAST_DDL_TIME": "2026-08-15 10:20:42"},
+    {"OWNER": "GESTAO", "OBJECT_NAME": "FLOW_DEMO_LOG", "OBJECT_TYPE": "TABLE", "STATUS": "VALID", "LAST_DDL_TIME": "2026-08-15 10:20:40"},
+    {"OWNER": "GESTAO", "OBJECT_NAME": "TRG_FLOW_DEMO_LOG", "OBJECT_TYPE": "TRIGGER", "STATUS": "VALID", "LAST_DDL_TIME": "2026-08-15 10:20:46"}
+  ],
+  "deps_direct": {
+    "GESTAO.FLOW_DEMO": [
+      {"REFERENCED_OWNER": "SYS", "REFERENCED_NAME": "STANDARD", "REFERENCED_TYPE": "PACKAGE", "DEPENDENCY_TYPE": "HARD"},
+      {"REFERENCED_OWNER": "GESTAO", "REFERENCED_NAME": "FLOW_DEMO", "REFERENCED_TYPE": "PACKAGE", "DEPENDENCY_TYPE": "HARD"},
+      {"REFERENCED_OWNER": "GESTAO", "REFERENCED_NAME": "FLOW_DEMO_LOG", "REFERENCED_TYPE": "TABLE", "DEPENDENCY_TYPE": "HARD"}
+    ],
+    "GESTAO.TRG_FLOW_DEMO_LOG": [
+      {"REFERENCED_OWNER": "GESTAO", "REFERENCED_NAME": "FLOW_DEMO_AUDIT", "REFERENCED_TYPE": "TABLE", "DEPENDENCY_TYPE": "HARD"},
+      {"REFERENCED_OWNER": "GESTAO", "REFERENCED_NAME": "FLOW_DEMO_LOG", "REFERENCED_TYPE": "TABLE", "DEPENDENCY_TYPE": "HARD"},
+      {"REFERENCED_OWNER": "SYS", "REFERENCED_NAME": "STANDARD", "REFERENCED_TYPE": "PACKAGE", "DEPENDENCY_TYPE": "HARD"}
+    ],
+    "GESTAO.FLOW_DEMO_LOG": [],
+    "GESTAO.FLOW_DEMO_AUDIT": []
+  },
+  "_deps_direct_raw_note": "deps_direct.sql filtra por (owner, name) sem tipo -- por isso a lista de GESTAO.FLOW_DEMO acima e a UNIAO das linhas da PACKAGE e da PACKAGE BODY, exatamente como a query real devolve. A linha GESTAO.FLOW_DEMO -> GESTAO.FLOW_DEMO (PACKAGE) e o self-loop (body depende da propria spec) e TEM que ser filtrada pela BFS.",
+  "triggers_for_tables": [
+    {"TABLE_OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_LOG", "TRIGGER_NAME": "TRG_FLOW_DEMO_LOG", "TRIGGER_TYPE": "AFTER EACH ROW", "TRIGGERING_EVENT": "INSERT", "WHEN_CLAUSE": null, "STATUS": "ENABLED"}
+  ],
+  "tab_columns": [
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_AUDIT", "COLUMN_NAME": "ID", "COLUMN_ID": 1, "DATA_TYPE": "NUMBER", "DATA_LENGTH": 22, "DATA_PRECISION": null, "DATA_SCALE": null, "NULLABLE": "N", "CHAR_USED": null, "DATA_DEFAULT": "\"GESTAO\".\"ISEQ$$_77712\".nextval"},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_AUDIT", "COLUMN_NAME": "LOG_ID", "COLUMN_ID": 2, "DATA_TYPE": "NUMBER", "DATA_LENGTH": 22, "DATA_PRECISION": null, "DATA_SCALE": null, "NULLABLE": "Y", "CHAR_USED": null, "DATA_DEFAULT": null},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_AUDIT", "COLUMN_NAME": "ACAO", "COLUMN_ID": 3, "DATA_TYPE": "VARCHAR2", "DATA_LENGTH": 30, "DATA_PRECISION": null, "DATA_SCALE": null, "NULLABLE": "Y", "CHAR_USED": "B", "DATA_DEFAULT": null},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_AUDIT", "COLUMN_NAME": "CRIADO_EM", "COLUMN_ID": 4, "DATA_TYPE": "TIMESTAMP(6)", "DATA_LENGTH": 11, "DATA_PRECISION": null, "DATA_SCALE": 6, "NULLABLE": "Y", "CHAR_USED": null, "DATA_DEFAULT": "SYSTIMESTAMP"},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_LOG", "COLUMN_NAME": "ID", "COLUMN_ID": 1, "DATA_TYPE": "NUMBER", "DATA_LENGTH": 22, "DATA_PRECISION": null, "DATA_SCALE": null, "NULLABLE": "N", "CHAR_USED": null, "DATA_DEFAULT": "\"GESTAO\".\"ISEQ$$_77709\".nextval"},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_LOG", "COLUMN_NAME": "MSG", "COLUMN_ID": 2, "DATA_TYPE": "VARCHAR2", "DATA_LENGTH": 200, "DATA_PRECISION": null, "DATA_SCALE": null, "NULLABLE": "Y", "CHAR_USED": "B", "DATA_DEFAULT": null},
+    {"OWNER": "GESTAO", "TABLE_NAME": "FLOW_DEMO_LOG", "COLUMN_NAME": "CRIADO_EM", "COLUMN_ID": 3, "DATA_TYPE": "TIMESTAMP(6)", "DATA_LENGTH": 11, "DATA_PRECISION": null, "DATA_SCALE": 6, "NULLABLE": "Y", "CHAR_USED": null, "DATA_DEFAULT": "SYSTIMESTAMP"}
+  ],
+  "_expected_bfs": {
+    "note": "Referencia de conferencia, nao segunda fonte de verdade. Com stop_schemas=[SYS,SYSTEM] e raiz GESTAO.FLOW_DEMO: nos esperados = FLOW_DEMO (1 no, spec+body agregados), FLOW_DEMO_LOG, SYS.STANDARD (folha, nao expandida), TRG_FLOW_DEMO_LOG (via Fase 4, tabela escrita), FLOW_DEMO_AUDIT (via dependencia do trigger). Self-loop FLOW_DEMO->FLOW_DEMO descartado.",
+    "nodes": ["GESTAO.FLOW_DEMO", "GESTAO.FLOW_DEMO_LOG", "SYS.STANDARD", "GESTAO.TRG_FLOW_DEMO_LOG", "GESTAO.FLOW_DEMO_AUDIT"]
+  }
+}

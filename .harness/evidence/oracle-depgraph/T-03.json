@@ -1,0 +1,15 @@
+{
+  "feature_id": "T-03",
+  "contract": "oracle-depgraph",
+  "desc": "Cada acesso a tabela vira aresta de leitura ou escrita com linha do fonte, e todo SQL dinamico aparece classificado como resolvido, parcial ou opaco",
+  "files": [
+    "plsqlflow/depgraph_enrich.py",
+    "plsqlflow/lexical.py",
+    "tests/test_depgraph_enrich.py",
+    "tests/test_plsqlflow_lexical.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_enrich.py tests/test_plsqlflow_lexical.py -q",
+  "recorded_at": "2026-08-15T14:16:41.905369+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:bf797a87a5144cf28bfb99f3cc397f604d3be504cba5246fdb000ab64e8bec8f"
+}

@@ -20,3 +20,8 @@ __pycache__/
 # Windows
 Thumbs.db
 desktop.ini
+
+# Grafo de dependencias (/oracle-dependency-graph) - artefato derivado do
+# banco, regeneravel a qualquer momento (python -m plsqlflow depgraph),
+# pode ficar grande - nao versionar.
+oracle-graph/

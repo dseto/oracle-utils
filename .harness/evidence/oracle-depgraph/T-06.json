@@ -1,0 +1,38 @@
+{
+  "feature_id": "T-06",
+  "contract": "oracle-depgraph",
+  "desc": "O assistente sabe consultar o grafo por grep antes de reabrir conexao, e as skills e agentes existentes apontam para ele",
+  "files": [
+    ".claude/skills/oracle-dependency-graph/SKILL.md",
+    ".claude/skills/dep-graph/SKILL.md",
+    ".claude/skills/plsql-flow/SKILL.md",
+    ".claude/skills/plsql-review/SKILL.md",
+    ".claude/agents/oracle-dba.md",
+    ".gitignore",
+    "tests/test_depgraph_skill.py",
+    "tests/test_plsql_flow.py",
+    "tests/conftest.py"
+  ],
+  "verify_cmd": "pytest -q -rs",
+  "recorded_at": "2026-08-15T15:11:52.086277+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:a1ee03d9b05d3d60ff1bf05028a63cdde1bac9b8a4655c28284f8d0a94856caa",
+  "skips": {
+    "count": 3,
+    "zero_collected": false,
+    "items": [
+      {
+        "nodeid": "tests\\test_depgraph_skill.py:306",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      },
+      {
+        "nodeid": "tests\\test_plsql_flow.py:208",
+        "reason": "evidencia e2e ja varrida por 'harness finish' (.harness/scratch/ e efemero por design) -- conteudo validado no contrato de origem"
+      },
+      {
+        "nodeid": "tests\\test_plsqlflow_skill.py:276",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      }
+    ]
+  }
+}

@@ -10,6 +10,8 @@ Grupos por -k:
 import re
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 FLOW_DIR = REPO / "sql" / "flow"
 SKILL = REPO / ".claude" / "skills" / "plsql-flow" / "SKILL.md"
@@ -194,11 +196,28 @@ def test_hprof_skill_warns_side_effects():
 
 # ---------------------------------------------------------- T-05 e2e_evidence
 
+# `.harness/scratch/` e efemero POR DESIGN: `harness finish` varre a pasta ao
+# fechar o contrato. Asserting `EVIDENCE.exists()` incondicionalmente fazia
+# estes dois testes passarem durante o contrato plsql-flow e falharem PARA
+# SEMPRE depois dele -- bug de teste, nao regressao de codigo. A evidencia e2e
+# real foi capturada e revisada no PR daquele contrato (fica no historico do
+# git); aqui validamos o CONTEUDO quando o arquivo existe (contrato em curso) e
+# pulamos com motivo visivel quando ja foi varrido.
+def _skip_if_swept():
+    if not EVIDENCE.exists():
+        pytest.skip(
+            "evidencia e2e ja varrida por 'harness finish' (.harness/scratch/ e "
+            "efemero por design) -- conteudo validado no contrato de origem"
+        )
+
+
 def test_e2e_evidence_exists():
-    assert EVIDENCE.exists(), "evidencia .harness/scratch/plsql-flow-evidence.md ausente"
+    _skip_if_swept()
+    assert EVIDENCE.exists()
 
 
 def test_e2e_evidence_content():
+    _skip_if_swept()
     text = read(EVIDENCE)
     lower = text.lower()
     checks = {
