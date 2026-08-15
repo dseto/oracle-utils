@@ -1,0 +1,11 @@
+{
+  "contract": "plsql-flow",
+  "verdicts": [
+    {
+      "verdict": "pass",
+      "evidence": "Verificador independente (subagente contexto limpo), 2 rodadas: 1a rodada FAIL com achado ALTA (ORA-00904 STATIC_M em type_hierarchy.sql, confirmado executando no dev) + MEDIA (DBMS_HPROF.ANALYZE inexistente no modo tabela) + 3 BAIXA; correcoes aplicadas e re-verificadas pelo mesmo verificador contra arquivos e banco dev real (query corrigida executa limpa, ALL_STATEMENTS bate com evidencia linhas 6/28/31, API HPROF correta); pytest 22/22; VERDICT: pass na 2a rodada",
+      "files_hash": "sha256:2720f312eb3ba63c5f85d6fdd3c79c0b48ce057be323561346eab81e11fdcfbd",
+      "recorded_at": "2026-08-15T10:44:34.711876+00:00"
+    }
+  ]
+}

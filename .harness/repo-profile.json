@@ -1,0 +1,44 @@
+{
+  "languages": [
+    {
+      "value": "python",
+      "evidence": "pyproject.toml",
+      "confidence": 1.0
+    }
+  ],
+  "package_manager": {
+    "value": "pip",
+    "evidence": "pyproject.toml",
+    "confidence": 0.6
+  },
+  "test_command": {
+    "value": "pytest",
+    "evidence": "pyproject.toml",
+    "confidence": 1.0
+  },
+  "test_glob": {
+    "value": "tests/**/*.py",
+    "evidence": "tests/test_conventions.py",
+    "confidence": 1.0
+  },
+  "extras": {
+    "lint_command": {
+      "value": "ruff check .",
+      "evidence": "pyproject.toml",
+      "confidence": 1.0
+    },
+    "docs": {
+      "value": [
+        "README.md",
+        "CLAUDE.md"
+      ],
+      "evidence": "README.md",
+      "confidence": 1.0
+    }
+  },
+  "unknowns": [],
+  "analyzed_at": "2026-08-15T10:11:06.900433+00:00",
+  "manifest_snapshot": {
+    "pyproject.toml": "fbf2de5c4099f0c368710a70aa781d7d037cac599c9c1a0a7c7321725ce225e7"
+  }
+}

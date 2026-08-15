@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-03",
+  "contract": "plsql-flow",
+  "desc": "Ambiente dev tem package de demonstração FLOW_DEMO cobrindo recursão mútua, SQL dinâmico, trigger e overload para validar a skill",
+  "files": [
+    "sql/flow/fixture_flow_demo.sql",
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsql_flow.py -q -k fixture",
+  "recorded_at": "2026-08-15T10:44:25.409037+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:3fa8a7903269c0038716e781f8fce45291a7f3ca050c01ce8b1d9f8505cf90b2"
+}

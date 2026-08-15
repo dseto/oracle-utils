@@ -1,0 +1,22 @@
+{
+  "feature_id": "T-01",
+  "contract": "plsql-flow",
+  "desc": "DBA consegue consultar toda a base estática do grafo (chamadas, triggers, tipos, sinônimos, overloads) com queries prontas da biblioteca",
+  "files": [
+    "sql/flow/resolve_target.sql",
+    "sql/flow/plscope_check.sql",
+    "sql/flow/plscope_calls.sql",
+    "sql/flow/plscope_statements.sql",
+    "sql/flow/fetch_source.sql",
+    "sql/flow/deps_direct.sql",
+    "sql/flow/triggers_for_tables.sql",
+    "sql/flow/fk_cascade.sql",
+    "sql/flow/type_hierarchy.sql",
+    "sql/flow/resolve_synonym.sql",
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsql_flow.py -q -k queries",
+  "recorded_at": "2026-08-15T10:44:23.597878+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:2366d0427d6660f610c7adbc90a8ec55dd2ef8cf1f4f62a52117cd499042ae73"
+}

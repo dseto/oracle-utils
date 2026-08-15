@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-05",
+  "contract": "plsql-flow",
+  "desc": "Skill validada de ponta a ponta contra FLOW_DEMO: ciclo detectado sem travar, trigger e SQL dinâmico no diagrama, overload resolvido, evidência gravada",
+  "files": [
+    ".harness/scratch/plsql-flow-evidence.md",
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsql_flow.py -q -k e2e_evidence",
+  "recorded_at": "2026-08-15T10:44:26.272629+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:80bd79bae06f2a85e40b408239959ec6b3ae88a23e2c8a4a4a5dc071cf6b97f5"
+}

@@ -1,0 +1,3 @@
+{"result": "fail", "contract": "plsql-flow", "feature_id": "T-02", "recorded_at": "2026-08-15T10:17:32.631041+00:00", "verify_cmd": "pytest tests/test_plsql_flow.py -q -k skill_doc", "exit_code": 1, "failure_line": ".FF.                                                                     [100%]", "failure_signature": "816a3480b12f", "files_hash": "sha256:11e0d13f6f6725a507474adbf0e938f0f662bfe1e85f659b11f843e5a416f535", "classification": "structural"}
+{"result": "pass", "recorded_at": "2026-08-15T10:18:09.429431+00:00", "files_hash": "sha256:6e6ec54be198ee6c79c6637324ed4994678277af615d6cc7cb422f8c22e2e4a1"}
+{"result": "pass", "recorded_at": "2026-08-15T10:44:17.640104+00:00", "files_hash": "sha256:bc954408b06f4d66d93484c4990497b16be8a2dfbe1d032f22191bd7318e39ea"}
