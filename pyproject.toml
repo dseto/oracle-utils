@@ -1,0 +1,12 @@
+[project]
+name = "oracle-utils"
+version = "0.1.0"
+description = "Toolkit de skills Claude Code para Oracle Database 19c (queries SQL, wrappers PowerShell, skills)"
+requires-python = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+# Linter aplica-se apenas aos testes Python; o conteudo do toolkit e SQL/PS1/MD.
+include = ["tests/**/*.py"]

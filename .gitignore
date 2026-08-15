@@ -1,0 +1,22 @@
+# Binarios portateis (JDK + SQLcl, ~700MB) - reinstalaveis
+tools/
+
+# SQLcl runtime
+.sqlcl/
+*.log
+history.log
+
+# Spools e saidas temporarias
+*.spool
+spool/
+out/
+
+# Python (testes de convencao)
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Windows
+Thumbs.db
+desktop.ini
