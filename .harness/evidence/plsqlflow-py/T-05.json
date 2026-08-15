@@ -1,0 +1,23 @@
+{
+  "feature_id": "T-05",
+  "contract": "plsqlflow-py",
+  "desc": "Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev",
+  "files": [
+    ".claude/skills/plsql-flow/SKILL.md",
+    "tests/test_plsqlflow_skill.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsqlflow_skill.py -q -rs",
+  "recorded_at": "2026-08-15T12:49:43.366276+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:65268a047f8c87914155d0159990dc1d86755acc4f8b36bb45b5fe323719a30b",
+  "skips": {
+    "count": 1,
+    "zero_collected": false,
+    "items": [
+      {
+        "nodeid": "tests\\test_plsqlflow_skill.py:276",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      }
+    ]
+  }
+}

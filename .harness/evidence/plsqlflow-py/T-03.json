@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-03",
+  "contract": "plsqlflow-py",
+  "desc": "SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca",
+  "files": [
+    "plsqlflow/dynsql.py",
+    "plsqlflow/lexical.py",
+    "tests/test_plsqlflow_lexical.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsqlflow_lexical.py -q",
+  "recorded_at": "2026-08-15T12:20:38.237966+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:c5a5bcfeec0f061cb4eb808b0f2cfb507449b0da722ffe54f2f8a2dd39d58fe6"
+}

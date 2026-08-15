@@ -1,0 +1,110 @@
+{
+  "_comment": "Extracao real e read-only do dev (GESTAO.FLOW_DEMO, dev = XE 21c local) via SQLcl MCP em 2026-08-15, mesmas queries de sql/flow/*.sql. Usada como fixture offline deterministica para plsqlflow/graph.py (T-02) e plsqlflow/dynsql.py (T-03) -- nao requer conexao real nos testes.",
+  "root": {"owner": "GESTAO", "object_name": "FLOW_DEMO", "subprogram": "MAIN"},
+  "resolve_target": [
+    {"object_name": "FLOW_DEMO", "procedure_name": null, "subprogram_id": 0, "overload": null, "position": null, "argument_name": null, "in_out": null, "data_type": null, "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "MAIN", "subprogram_id": 1, "overload": null, "position": 1, "argument_name": "P_N", "in_out": "IN", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "MAIN", "subprogram_id": 1, "overload": null, "position": 2, "argument_name": "P_TAG", "in_out": "IN", "data_type": "VARCHAR2", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "PROC_A", "subprogram_id": 2, "overload": null, "position": 1, "argument_name": "P_N", "in_out": "IN", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "PROC_B", "subprogram_id": 3, "overload": null, "position": 1, "argument_name": "P_N", "in_out": "IN", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "CALC_OVERLOAD", "subprogram_id": 4, "overload": "1", "position": 0, "argument_name": null, "in_out": "OUT", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "CALC_OVERLOAD", "subprogram_id": 4, "overload": "1", "position": 1, "argument_name": "P_VAL", "in_out": "IN", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "CALC_OVERLOAD", "subprogram_id": 5, "overload": "2", "position": 0, "argument_name": null, "in_out": "OUT", "data_type": "NUMBER", "type_owner": null, "type_name": null},
+    {"object_name": "FLOW_DEMO", "procedure_name": "CALC_OVERLOAD", "subprogram_id": 5, "overload": "2", "position": 1, "argument_name": "P_VAL", "in_out": "IN", "data_type": "VARCHAR2", "type_owner": null, "type_name": null}
+  ],
+  "plscope_check": {"owner": "GESTAO", "name": "FLOW_DEMO", "type": "PACKAGE BODY", "plscope_settings": "IDENTIFIERS:ALL, STATEMENTS:ALL"},
+  "plscope_calls": [
+    {"line": 11, "col": 5, "called_name": "LOG_MSG", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE BODY", "decl_type": "PROCEDURE", "decl_line": 3},
+    {"line": 13, "col": 7, "called_name": "PROC_B", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE", "decl_type": "PROCEDURE", "decl_line": 4},
+    {"line": 20, "col": 7, "called_name": "PROC_A", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE", "decl_type": "PROCEDURE", "decl_line": 3},
+    {"line": 41, "col": 12, "called_name": "LENGTH", "calling_object": "FLOW_DEMO", "decl_owner": "SYS", "decl_object": "STANDARD", "decl_object_type": "PACKAGE", "decl_type": "FUNCTION", "decl_line": 385},
+    {"line": 47, "col": 5, "called_name": "PROC_A", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE", "decl_type": "PROCEDURE", "decl_line": 3},
+    {"line": 48, "col": 5, "called_name": "RUN_DYNAMIC", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE BODY", "decl_type": "PROCEDURE", "decl_line": 24},
+    {"line": 49, "col": 12, "called_name": "CALC_OVERLOAD", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE", "decl_type": "FUNCTION", "decl_line": 5},
+    {"line": 50, "col": 12, "called_name": "CALC_OVERLOAD", "calling_object": "FLOW_DEMO", "decl_owner": "GESTAO", "decl_object": "FLOW_DEMO", "decl_object_type": "PACKAGE", "decl_type": "FUNCTION", "decl_line": 6}
+  ],
+  "plscope_statements": [
+    {"line": 6, "stmt_type": "INSERT", "sql_id": "5rhw9u2hz7b12", "has_into_record": "NO", "text": "INSERT INTO FLOW_DEMO_LOG (MSG) VALUES (:B1 )"},
+    {"line": 28, "stmt_type": "EXECUTE IMMEDIATE", "sql_id": null, "has_into_record": "NO", "text": null},
+    {"line": 31, "stmt_type": "EXECUTE IMMEDIATE", "sql_id": null, "has_into_record": "NO", "text": null}
+  ],
+  "fetch_source": {
+    "PACKAGE": [
+      "PACKAGE flow_demo AS\n",
+      "  PROCEDURE main(p_n IN NUMBER, p_tag IN VARCHAR2);\n",
+      "  PROCEDURE proc_a(p_n IN NUMBER);\n",
+      "  PROCEDURE proc_b(p_n IN NUMBER);\n",
+      "  FUNCTION calc_overload(p_val IN NUMBER) RETURN NUMBER;\n",
+      "  FUNCTION calc_overload(p_val IN VARCHAR2) RETURN NUMBER;\n",
+      "END flow_demo;"
+    ],
+    "PACKAGE BODY": [
+      "PACKAGE BODY flow_demo AS\n", "\n",
+      "  PROCEDURE log_msg(p_msg IN VARCHAR2) IS\n", "  BEGIN\n",
+      "    -- DML estatico: dispara trg_flow_demo_log\n",
+      "    INSERT INTO flow_demo_log (msg) VALUES (p_msg);\n",
+      "  END log_msg;\n", "\n",
+      "  PROCEDURE proc_a(p_n IN NUMBER) IS\n", "  BEGIN\n",
+      "    log_msg('proc_a n=' || p_n);\n",
+      "    IF p_n > 0 THEN\n",
+      "      proc_b(p_n - 1);  -- recursao mutua: A -> B -> A\n",
+      "    END IF;\n",
+      "  END proc_a;\n", "\n",
+      "  PROCEDURE proc_b(p_n IN NUMBER) IS\n", "  BEGIN\n",
+      "    IF p_n > 0 THEN\n",
+      "      proc_a(p_n - 1);  -- fecha o ciclo B -> A\n",
+      "    END IF;\n",
+      "  END proc_b;\n", "\n",
+      "  PROCEDURE run_dynamic(p_tag IN VARCHAR2) IS\n",
+      "    v_sql VARCHAR2(400);\n",
+      "  BEGIN\n",
+      "    -- dinamico RESOLVIVEL: string 100% literal\n",
+      "    EXECUTE IMMEDIATE 'INSERT INTO flow_demo_log (msg) VALUES (''dyn-fixo'')';\n",
+      "    -- dinamico IRRESOLVIVEL: string montada com variavel/parametro\n",
+      "    v_sql := 'INSERT INTO flow_demo_log (msg) VALUES (''' || p_tag || ''')';\n",
+      "    EXECUTE IMMEDIATE v_sql;\n",
+      "  END run_dynamic;\n", "\n",
+      "  FUNCTION calc_overload(p_val IN NUMBER) RETURN NUMBER IS\n",
+      "  BEGIN\n",
+      "    RETURN p_val * 2;\n",
+      "  END calc_overload;\n", "\n",
+      "  FUNCTION calc_overload(p_val IN VARCHAR2) RETURN NUMBER IS\n",
+      "  BEGIN\n",
+      "    RETURN LENGTH(p_val);\n",
+      "  END calc_overload;\n", "\n",
+      "  PROCEDURE main(p_n IN NUMBER, p_tag IN VARCHAR2) IS\n",
+      "    v_x NUMBER;\n",
+      "  BEGIN\n",
+      "    proc_a(p_n);\n",
+      "    run_dynamic(p_tag);\n",
+      "    v_x := calc_overload(p_n);    -- overload NUMBER\n",
+      "    v_x := calc_overload(p_tag);  -- overload VARCHAR2\n",
+      "  END main;\n", "\n",
+      "END flow_demo;"
+    ]
+  },
+  "triggers_for_tables": [
+    {"table_owner": "GESTAO", "table_name": "FLOW_DEMO_LOG", "trigger_name": "TRG_FLOW_DEMO_LOG", "trigger_type": "AFTER EACH ROW", "triggering_event": "INSERT", "when_clause": null, "status": "ENABLED"}
+  ],
+  "trigger_source": {
+    "TRG_FLOW_DEMO_LOG": [
+      "TRIGGER trg_flow_demo_log\n",
+      "AFTER INSERT ON flow_demo_log\n",
+      "FOR EACH ROW\n",
+      "BEGIN\n",
+      "  INSERT INTO flow_demo_audit (log_id, acao) VALUES (:NEW.id, 'INSERT_LOG');\n",
+      "END;"
+    ]
+  },
+  "fk_cascade": [],
+  "type_hierarchy": [],
+  "resolve_synonym": [],
+  "expected": {
+    "_comment": "Contagens de referencia documentadas no plano original (docs/plano-plsql-flow-deterministico.md) para o e2e do FLOW_DEMO -- usar para validar graph.py e o golden mermaid, nao redefinir aqui.",
+    "recursion_edges": ["PROC_A->PROC_B", "PROC_B->PROC_A"],
+    "dynamic_resolved": ["run_dynamic:28"],
+    "dynamic_unresolved": ["run_dynamic:31"],
+    "trigger_edges": ["FLOW_DEMO_LOG->TRG_FLOW_DEMO_LOG"],
+    "overload_calls": ["main:49 -> calc_overload#1 (NUMBER)", "main:50 -> calc_overload#2 (VARCHAR2)"]
+  }
+}

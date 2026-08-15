@@ -1,0 +1,17 @@
+{
+  "contract": "plsqlflow-py",
+  "verdicts": [
+    {
+      "verdict": "fail",
+      "evidence": "plsqlflow/cli.py:19-47 (DbExtractor) e :94-131 (main()) nunca chamam resolve.resolve_synonym_chain, extract.fetch_plscope_check ou qualquer funcao de plsqlflow/lexical.py; graph.py:237-310 (_expand) chama extractor.calls()/plscope_calls.sql incondicionalmente, sem checar PL/Scope (plscope_check.sql) nem fallback para lexical.py. Resultado: SKILL.md:42-47 (resolucao de sinonimos via resolve_synonym.sql) e SKILL.md:54-63 (Camada B lexica sobre ALL_SOURCE, fallback sem PL/Scope, descrita como comportamento automatico do script sem LLM) descrevem funcionalidade que o pipeline real (cli.py->graph.py->report.py) nao executa -- lexical.py e resolve_synonym_chain so sao exercitados pelos proprios testes unitarios isolados (test_plsqlflow_lexical.py, test_plsqlflow_graph.py), nunca pelo caminho de producao. extract.py:121-127 (fetch_plscope_check) e :149-152 (fetch_deps_direct) tem zero chamadores em codigo de producao E zero cobertura de teste em qualquer arquivo de tests/ -- sql/flow/plscope_check.sql e deps_direct.sql nunca rodam, nem mockado nem contra banco real. Achado secundario: cli.py:87 declara --conn como required=True, contradizendo SKILL.md:30-31 que documenta um segundo modo de conexao 'Sem --conn: variaveis de ambiente diretas' como alcancavel via CLI -- na pratica esse modo so existe via chamada direta a db.connect(alias=None) em teste, nunca pelo python -m plsqlflow real.",
+      "files_hash": "sha256:c9d87826c3f24d9f74d21bf6e919705cd5bafbda607fd909a6151e729ced2121",
+      "recorded_at": "2026-08-15T12:45:50.660239+00:00"
+    },
+    {
+      "verdict": "pass",
+      "evidence": "plsqlflow/cli.py:104-129 _resolve_root chama resolve.resolve_synonym_chain (linha 107) e so quando fetch_resolve_target vem vazio; plsqlflow/cli.py:132-143 _ensure_plscope chama extract.fetch_plscope_check e RAISE RuntimeError se faltar IDENTIFIERS:ALL; ambas chamadas de dentro de main() em plsqlflow/cli.py:171-172 (fluxo real, nao so definidas); plsqlflow/cli.py:152-157 --conn tem default=None (nao mais obrigatorio) e db.py:76-101 _resolve_from_env cobre PLSQLFLOW_USER/PWD/DSN; tests/test_plsqlflow_skill.py:141-229 (test_synonym_fallback_target_*, test_plscope_available_*, test_ensure_plscope_raises_clear_error_without_identifiers_all, test_cli_conn_argument_is_optional) fazem asserts reais sobre valor retornado/excecao levantada, nao so 'roda sem erro'; .claude/skills/plsql-flow/SKILL.md linhas 54-72 e 127-137 agora diz explicitamente que a Camada B lexica NAO esta ligada a travessia automatica e que o script FALHA ALTO (RuntimeError) sem PL/Scope, condizente com o codigo -- sem promessa de fallback automatico; pytest -q completo = 86 passed, 2 failed (as 2 esperadas: test_e2e_evidence_exists/content, evidencia de contrato anterior fechado) e ruff check . = All checks passed",
+      "files_hash": "sha256:c2a7f402548b1715e4ec379e74c3fc550a5a2e4829becf2dc108b60320907909",
+      "recorded_at": "2026-08-15T12:52:14.928728+00:00"
+    }
+  ]
+}
