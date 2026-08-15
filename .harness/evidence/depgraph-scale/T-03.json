@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-03",
+  "contract": "depgraph-scale",
+  "desc": "Classificar acessos a tabela e SQL dinâmico busca fonte e statements em lotes por schema, com o mesmo resultado de antes",
+  "files": [
+    "plsqlflow/cli.py",
+    "tests/test_depgraph_enrich_batch.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_enrich_batch.py tests/test_depgraph_cli.py -q",
+  "recorded_at": "2026-08-15T21:18:53.444115+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:d09d0a58a59bdecfc46b897b9090219621384fd88221ca258ef83d5e5b60e741"
+}

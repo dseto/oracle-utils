@@ -348,3 +348,233 @@ def test_table_node_md_has_columns_and_inbound_write(full_result, tmp_path):
     assert "<- GESTAO.FLOW_DEMO" in text
     assert "## Triggers ativados" in text
     assert "GESTAO.TRG_FLOW_DEMO_LOG" in text
+
+
+# ------------------------------------------------------------- indice de arestas (T-04)
+#
+# `render_graph` deixa de passar a lista INTEIRA de arestas pra cada
+# `render_node_md` (custo O(nos x arestas) -- minutos de CPU num grafo de
+# 20 mil nos / 200 mil arestas) e passa a indexar uma vez
+# (`from_ref -> [arestas]`, `to_ref -> [arestas]`) e entregar so as
+# arestas do proprio no. Os tres testes abaixo cobrem exatamente o que a
+# tarefa pede: (1) equivalencia -- grafo sintetico medio renderiza os
+# MESMOS bytes de sempre; (2) corretude do indice -- no so-inbound, no
+# so-outbound, no sem aresta nenhuma e aresta com to_ref pra fora do grafo
+# (UNKNOWN_TARGET = "?", emitido de verdade por depgraph_enrich) nao
+# quebram nem somem; (3) prova barata de que `render_node_md` recebe so
+# as arestas do proprio no (sem medir relogio -- flaky).
+
+
+def _build_medium_synthetic_result() -> depgraph.DepGraphResult:
+    """Grafo sintetico medio (~30 nos) cobrindo os seis `edge_type` e os
+    casos que o indice de arestas precisa acertar: cadeia de CALL onde
+    cada no do meio tem aresta inbound E outbound ao mesmo tempo,
+    SYNONYM_RESOLVES_TO (mesma secao de CALL no node .md), READ/WRITE
+    numa TABLE com colunas, TRIGGER_FIRES e duas DYNAMIC_SQL da MESMA
+    origem em linhas diferentes (a ordenacao final e por `sorted(...)`
+    dentro de `_render_dynsql_lines` -- o indice so precisa preservar as
+    DUAS entradas, no ordena quem le). 100% hardcoded, sem banco/relogio/
+    random."""
+    procs = [
+        depgraph.DepNode(
+            owner="GESTAO",
+            object_name="P{:02d}".format(i),
+            object_type="PROCEDURE",
+            status="VALID",
+            plscope=True,
+            source_first_line=1,
+            source_last_line=50,
+        )
+        for i in range(28)
+    ]
+    table = depgraph.DepNode(
+        owner="GESTAO",
+        object_name="TBL",
+        object_type="TABLE",
+        status="VALID",
+        plscope=False,
+        columns=[
+            extract.TabColumnRow(
+                owner="GESTAO", table_name="TBL", column_name="ID", column_id=1,
+                data_type="NUMBER", nullable="N", data_default=None, data_precision=10,
+            ),
+            extract.TabColumnRow(
+                owner="GESTAO", table_name="TBL", column_name="NOME", column_id=2,
+                data_type="VARCHAR2", nullable="Y", data_default=None, data_length=100,
+            ),
+        ],
+    )
+    trigger = depgraph.DepNode(
+        owner="GESTAO", object_name="TRG", object_type="TRIGGER", status="VALID", plscope=True,
+        trigger_status="ENABLED",
+    )
+    nodes = procs + [table, trigger]
+
+    edges: List[depgraph.DepEdge] = []
+    for i in range(27):
+        edges.append(depgraph.DepEdge(
+            from_ref="GESTAO.P{:02d}".format(i), to_ref="GESTAO.P{:02d}".format(i + 1),
+            edge_type="CALL", line=i + 1,
+        ))
+    edges.append(depgraph.DepEdge(
+        from_ref="GESTAO.P05", to_ref="GESTAO.P20", edge_type="SYNONYM_RESOLVES_TO", line=None,
+    ))
+
+    for i in (1, 3, 7, 12):
+        edges.append(depgraph.DepEdge(
+            from_ref="GESTAO.P{:02d}".format(i), to_ref="GESTAO.TBL",
+            edge_type="READ", line=100 + i, cols=["ID", "NOME"],
+        ))
+    for i in (2, 9):
+        edges.append(depgraph.DepEdge(
+            from_ref="GESTAO.P{:02d}".format(i), to_ref="GESTAO.TBL",
+            edge_type="WRITE", line=200 + i, op="INSERT",
+        ))
+
+    edges.append(depgraph.DepEdge(
+        from_ref="GESTAO.TBL", to_ref="GESTAO.TRG", edge_type="TRIGGER_FIRES", line=None, op="INSERT",
+    ))
+
+    # DYNAMIC_SQL: mesma origem (P10), duas linhas distintas -- um alvo
+    # dentro do grafo, outro UNKNOWN_TARGET ("?").
+    edges.append(depgraph.DepEdge(
+        from_ref="GESTAO.P10", to_ref="GESTAO.TBL", edge_type="DYNAMIC_SQL",
+        line=15, confidence="partial", dynamic=True, snippet_ref="P10:15",
+    ))
+    edges.append(depgraph.DepEdge(
+        from_ref="GESTAO.P10", to_ref="?", edge_type="DYNAMIC_SQL",
+        line=42, confidence="opaque", dynamic=True, snippet_ref="P10:42",
+    ))
+
+    snippets = {
+        "P10:15": "EXECUTE IMMEDIATE 'SELECT * FROM TBL'",
+        "P10:42": "EXECUTE IMMEDIATE v_sql",
+    }
+
+    return depgraph.DepGraphResult(
+        nodes=nodes,
+        edges=edges,
+        needs_recompile=[],
+        truncated=False,
+        truncation_reason=None,
+        not_expanded=[],
+        stats={"nodes": len(nodes), "edges": len(edges)},
+        snippets=snippets,
+    )
+
+
+def test_render_equivalence_for_medium_synthetic_graph(tmp_path):
+    """Entrega 1 do pedido de teste: o mesmo `DepGraphResult` sintetico
+    renderizado em dois diretorios temporarios produz os MESMOS bytes em
+    TODOS os arquivos -- se o indice de arestas reordenasse ou perdesse
+    algo, esse teste pegaria (a suite golden ja prova que os bytes de hoje
+    nao mudam pro grafo pequeno; este prova o mesmo pra um grafo medio,
+    com os seis edge_type e o caso de duas DYNAMIC_SQL na mesma origem)."""
+    result = _build_medium_synthetic_result()
+    out_a = tmp_path / "synthetic_a"
+    out_b = tmp_path / "synthetic_b"
+    params = {"root_ref": "GESTAO.P00"}
+
+    depgraph_render.render_graph(result, out_a, params)
+    depgraph_render.render_graph(result, out_b, params)
+
+    rel_a = [p.relative_to(out_a).as_posix() for p in _tree(out_a)]
+    rel_b = [p.relative_to(out_b).as_posix() for p in _tree(out_b)]
+    assert rel_a == rel_b
+
+    for rel in rel_a:
+        assert (out_a / rel).read_bytes() == (out_b / rel).read_bytes(), (
+            "arquivo {} difere entre as duas renderizacoes do mesmo result".format(rel)
+        )
+
+    # duas DYNAMIC_SQL da mesma origem, ambas presentes (o indice nao pode
+    # engolir uma delas).
+    p10_text = (out_a / "nodes" / depgraph_render.node_filename("GESTAO", "P10")).read_text(encoding="utf-8")
+    assert "L15" in p10_text and "-> GESTAO.TBL" in p10_text
+    assert "L42" in p10_text and "-> ?" in p10_text
+
+
+def test_edge_index_handles_isolated_and_unknown_target_nodes(tmp_path):
+    """Entrega 2 do pedido de teste: ataca a corretude do indice --
+    no so-inbound, no so-outbound, no sem aresta nenhuma, e uma aresta
+    cujo `to_ref` nao corresponde a NENHUM no do grafo (UNKNOWN_TARGET =
+    "?", que `depgraph_enrich` emite de verdade quando nao resolve o alvo
+    do SQL dinamico). O indice (`to_ref -> [arestas]`) nao pode estourar
+    KeyError nem descartar essa aresta."""
+    nodes = [
+        depgraph.DepNode(owner="GESTAO", object_name="ONLY_IN", object_type="PROCEDURE", status="VALID", plscope=True),
+        depgraph.DepNode(owner="GESTAO", object_name="ONLY_OUT", object_type="PROCEDURE", status="VALID", plscope=True),
+        depgraph.DepNode(owner="GESTAO", object_name="ISOLATED", object_type="PROCEDURE", status="VALID", plscope=True),
+    ]
+    edges = [
+        depgraph.DepEdge(from_ref="GESTAO.ONLY_OUT", to_ref="GESTAO.ONLY_IN", edge_type="CALL", line=10),
+        # UNKNOWN_TARGET: nenhum no do grafo tem ref "?".
+        depgraph.DepEdge(from_ref="GESTAO.ONLY_OUT", to_ref="?", edge_type="WRITE", line=20, op="INSERT"),
+    ]
+    result = depgraph.DepGraphResult(
+        nodes=nodes, edges=edges, needs_recompile=[], truncated=False,
+        truncation_reason=None, not_expanded=[], stats={},
+    )
+    out_dir = tmp_path / "idx"
+
+    # nao pode estourar KeyError/IndexError -- e a asserção principal deste
+    # teste.
+    depgraph_render.render_graph(result, out_dir, {})
+
+    only_in_text = (out_dir / "nodes" / depgraph_render.node_filename("GESTAO", "ONLY_IN")).read_text(encoding="utf-8")
+    assert "## Chamado por (inbound)" in only_in_text
+    assert "- GESTAO.ONLY_OUT (CALL)" in only_in_text
+    assert "## Chama (outbound)" not in only_in_text
+
+    only_out_text = (out_dir / "nodes" / depgraph_render.node_filename("GESTAO", "ONLY_OUT")).read_text(encoding="utf-8")
+    assert "## Chama (outbound)" in only_out_text
+    assert "- GESTAO.ONLY_IN (CALL)" in only_out_text
+    assert "## Chamado por (inbound)" not in only_out_text
+    assert "## Tabelas acessadas" in only_out_text
+    assert "-> ?" in only_out_text  # WRITE pro UNKNOWN_TARGET nao pode sumir
+
+    isolated_text = (out_dir / "nodes" / depgraph_render.node_filename("GESTAO", "ISOLATED")).read_text(encoding="utf-8")
+    assert "## Chama (outbound)" not in isolated_text
+    assert "## Chamado por (inbound)" not in isolated_text
+    assert "## Tabelas acessadas" not in isolated_text
+
+    # a aresta pro UNKNOWN_TARGET continua em edges.jsonl -- o indice do
+    # render e so uma otimizacao de leitura, nao pode descartar dado.
+    edges_text = (out_dir / "edges.jsonl").read_text(encoding="utf-8")
+    assert '"to_ref": "?"' in edges_text
+
+
+def test_render_node_md_receives_only_its_own_edges(monkeypatch, tmp_path):
+    """Entrega 3 do pedido de teste: prova barata (sem relogio, sem
+    `random`) de que `render_node_md` recebe so as arestas do proprio no
+    -- intercepta a chamada e verifica que TODO outbound tem `from_ref`
+    igual ao no e TODO inbound tem `to_ref` igual ao no; e que a soma das
+    arestas recebidas bate com o total esperado (nenhuma aresta duplicada
+    nem perdida). Se `render_graph` voltasse a passar a lista inteira,
+    este teste pegaria na hora (outbound/inbound teriam arestas de outros
+    nos)."""
+    result = _build_medium_synthetic_result()
+    node_refs = {"{}.{}".format(n.owner, n.object_name) for n in result.nodes}
+
+    original = depgraph_render.render_node_md
+    calls: List[Any] = []
+
+    def spy(node, outbound, inbound, nodes_by_ref, snippets):
+        ref = "{}.{}".format(node.owner, node.object_name)
+        calls.append((ref, list(outbound), list(inbound)))
+        return original(node, outbound, inbound, nodes_by_ref, snippets)
+
+    monkeypatch.setattr(depgraph_render, "render_node_md", spy)
+    depgraph_render.render_graph(result, tmp_path / "spy", {})
+
+    assert len(calls) == len(result.nodes)
+    for ref, outbound, inbound in calls:
+        assert all(e.from_ref == ref for e in outbound), "outbound de {} tem aresta de outro no".format(ref)
+        assert all(e.to_ref == ref for e in inbound), "inbound de {} tem aresta de outro no".format(ref)
+
+    total_outbound = sum(len(outbound) for _, outbound, _ in calls)
+    total_inbound = sum(len(inbound) for _, _, inbound in calls)
+    expected_outbound = sum(1 for e in result.edges if e.from_ref in node_refs)
+    expected_inbound = sum(1 for e in result.edges if e.to_ref in node_refs)
+    assert total_outbound == expected_outbound
+    assert total_inbound == expected_inbound

@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `oracle-depgraph`
+Contrato: `depgraph-scale`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,12 +8,11 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | Catalogo de objetos e colunas de tabela ficam disponiveis ao extrator, com data de ultimo DDL para detectar grafo desatualizado | done |
-| T-02 | Percorrer as dependencias a partir da raiz visita cada objeto uma unica vez, para nas fronteiras do sistema e avisa quando atinge o limite de tamanho em vez de truncar calado | done |
-| T-03 | Cada acesso a tabela vira aresta de leitura ou escrita com linha do fonte, e todo SQL dinamico aparece classificado como resolvido, parcial ou opaco | done |
-| T-04 | Triggers das tabelas escritas entram no grafo com suas proprias dependencias, e regerar o grafo contra o mesmo banco produz arquivos identicos byte a byte | done |
-| T-05 | Gerar o grafo pela linha de comando funciona sem quebrar o uso atual do pacote, nunca recebe senha por argumento e sinaliza cada situacao com um codigo de saida proprio | done |
-| T-06 | O assistente sabe consultar o grafo por grep antes de reabrir conexao, e as skills e agentes existentes apontam para ele | done |
+| T-01 | Percorrer as dependências consulta o banco uma vez por nível da busca em vez de uma vez por objeto, sem mudar o grafo resultante | done |
+| T-02 | O limite de tamanho e a fronteira de schema continuam se comportando exatamente como antes quando a busca passa a ser em lote | done |
+| T-03 | Classificar acessos a tabela e SQL dinâmico busca fonte e statements em lotes por schema, com o mesmo resultado de antes | done |
+| T-04 | Acima de um limiar de nós o índice vira um sumário com os objetos mais conectados, e o fechamento transitivo é separado por schema | done |
+| T-05 | O grafo aceita várias raízes num resultado único, o limite de objetos pode ser ampliado ou desligado, e a skill documenta o uso em sistemas gigantes | done |
 
 ## Última atualização
 

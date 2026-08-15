@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-04",
+  "contract": "depgraph-scale",
+  "desc": "Acima de um limiar de nós o índice vira um sumário com os objetos mais conectados, e o fechamento transitivo é separado por schema",
+  "files": [
+    "plsqlflow/depgraph_render.py",
+    "plsqlflow/cli.py",
+    "tests/test_depgraph_index_split.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_index_split.py tests/test_depgraph_render.py -q",
+  "recorded_at": "2026-08-15T21:18:55.776832+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:1a485c33ceef61a9a2a310954b3d6ca7e7c3d5ef8955d99ce25be86b9c1d3381"
+}

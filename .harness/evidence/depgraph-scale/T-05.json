@@ -1,0 +1,31 @@
+{
+  "feature_id": "T-05",
+  "contract": "depgraph-scale",
+  "desc": "O grafo aceita várias raízes num resultado único, o limite de objetos pode ser ampliado ou desligado, e a skill documenta o uso em sistemas gigantes",
+  "files": [
+    "plsqlflow/cli.py",
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_multiroot.py",
+    ".claude/skills/oracle-dependency-graph/SKILL.md",
+    "docs/plano-oracle-dependency-graph.md",
+    "tests/test_depgraph_cli.py"
+  ],
+  "verify_cmd": "pytest -q -rs",
+  "recorded_at": "2026-08-15T21:18:49.131919+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:198ad31e410468c2ad9877259a2997b8b8020cdc14da2d34185132ecc126e321",
+  "skips": {
+    "count": 2,
+    "zero_collected": false,
+    "items": [
+      {
+        "nodeid": "tests\\test_depgraph_skill.py:305",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      },
+      {
+        "nodeid": "tests\\test_plsqlflow_skill.py:276",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      }
+    ]
+  }
+}

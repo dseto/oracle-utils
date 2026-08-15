@@ -1,44 +1,38 @@
 {
-  "contract": "oracle-depgraph",
-  "compiled_at": "2026-08-15T15:10:21.329133+00:00",
+  "contract": "depgraph-scale",
+  "compiled_at": "2026-08-15T21:18:09.546594+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
-      "3 falhas consecutivas do mesmo verify_cmd sem progresso",
-      "python-oracledb nao conecta no dev (localhost:1521/XEPDB1) apos 2 tentativas de diagnostico",
-      "fixture FLOW_DEMO ausente/invalida no dev e recriacao exigiria DDL nao autorizado",
       "qualquer necessidade de DML/DDL no banco (o contrato e 100% somente-leitura)",
-      "necessidade de alterar plsqlflow/graph.py, mermaid.py ou report.py (modulos congelados por golden test de outro contrato)"
+      "necessidade de alterar plsqlflow/graph.py, mermaid.py ou report.py (modulos congelados por golden test do contrato plsqlflow-py)",
+      "qualquer mudanca que altere os bytes de tests/fixtures/depgraph_golden -- o grafo pequeno tem que continuar rendendo identico; se uma tarefa nao conseguir evitar isso, parar e devolver ao humano",
+      "T-02 (caps e fronteira sob lote) falhar a equivalencia com o caminho por-no: e sinal de que o recorte por nivel esta errado, nao de que o teste esta chato -- parar e devolver, nao afrouxar o teste",
+      "3 falhas consecutivas do mesmo verify_cmd sem causa nova identificada entre as tentativas"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "Catalogo de objetos e colunas de tabela ficam disponiveis ao extrator, com data de ultimo DDL para detectar grafo desatualizado",
+      "desc": "Percorrer as dependências consulta o banco uma vez por nível da busca em vez de uma vez por objeto, sem mudar o grafo resultante",
       "files": [
-        "sql/flow/object_catalog.sql",
-        "sql/flow/tab_columns.sql",
-        "plsqlflow/queries.py",
-        "plsqlflow/extract.py",
         "plsqlflow/depgraph.py",
-        "tests/test_depgraph_unit.py",
-        "tests/test_plsqlflow_unit.py"
+        "tests/test_depgraph_bfs_batch.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_unit.py tests/test_conventions.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_bfs_batch.py tests/test_depgraph_bfs.py tests/test_depgraph_triggers.py -q",
       "depends": [],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-02",
-      "desc": "Percorrer as dependencias a partir da raiz visita cada objeto uma unica vez, para nas fronteiras do sistema e avisa quando atinge o limite de tamanho em vez de truncar calado",
+      "desc": "O limite de tamanho e a fronteira de schema continuam se comportando exatamente como antes quando a busca passa a ser em lote",
       "files": [
         "plsqlflow/depgraph.py",
-        "tests/test_depgraph_bfs.py",
-        "tests/fixtures/depgraph_extract.json"
+        "tests/test_depgraph_bfs_limits.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_bfs.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_bfs_limits.py tests/test_depgraph_bfs.py -q",
       "depends": [
         "T-01"
       ],
@@ -47,33 +41,26 @@
     },
     {
       "id": "T-03",
-      "desc": "Cada acesso a tabela vira aresta de leitura ou escrita com linha do fonte, e todo SQL dinamico aparece classificado como resolvido, parcial ou opaco",
+      "desc": "Classificar acessos a tabela e SQL dinâmico busca fonte e statements em lotes por schema, com o mesmo resultado de antes",
       "files": [
-        "plsqlflow/depgraph_enrich.py",
-        "plsqlflow/lexical.py",
-        "tests/test_depgraph_enrich.py",
-        "tests/test_plsqlflow_lexical.py"
+        "plsqlflow/cli.py",
+        "tests/test_depgraph_enrich_batch.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_enrich.py tests/test_plsqlflow_lexical.py -q",
-      "depends": [
-        "T-01"
-      ],
+      "verify_cmd": "pytest tests/test_depgraph_enrich_batch.py tests/test_depgraph_cli.py -q",
+      "depends": [],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-04",
-      "desc": "Triggers das tabelas escritas entram no grafo com suas proprias dependencias, e regerar o grafo contra o mesmo banco produz arquivos identicos byte a byte",
+      "desc": "Acima de um limiar de nós o índice vira um sumário com os objetos mais conectados, e o fechamento transitivo é separado por schema",
       "files": [
-        "plsqlflow/depgraph.py",
         "plsqlflow/depgraph_render.py",
-        "tests/test_depgraph_triggers.py",
-        "tests/test_depgraph_render.py",
-        "tests/fixtures/depgraph_golden/"
+        "plsqlflow/cli.py",
+        "tests/test_depgraph_index_split.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_triggers.py tests/test_depgraph_render.py -q",
+      "verify_cmd": "pytest tests/test_depgraph_index_split.py tests/test_depgraph_render.py -q",
       "depends": [
-        "T-02",
         "T-03"
       ],
       "cwd": null,
@@ -81,38 +68,19 @@
     },
     {
       "id": "T-05",
-      "desc": "Gerar o grafo pela linha de comando funciona sem quebrar o uso atual do pacote, nunca recebe senha por argumento e sinaliza cada situacao com um codigo de saida proprio",
+      "desc": "O grafo aceita várias raízes num resultado único, o limite de objetos pode ser ampliado ou desligado, e a skill documenta o uso em sistemas gigantes",
       "files": [
         "plsqlflow/cli.py",
-        "tests/test_depgraph_cli.py",
-        "sql/flow/triggers_any_status.sql",
-        "plsqlflow/queries.py",
-        "plsqlflow/extract.py"
-      ],
-      "verify_cmd": "pytest tests/test_depgraph_cli.py -q",
-      "depends": [
-        "T-04"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-06",
-      "desc": "O assistente sabe consultar o grafo por grep antes de reabrir conexao, e as skills e agentes existentes apontam para ele",
-      "files": [
+        "plsqlflow/depgraph.py",
+        "tests/test_depgraph_multiroot.py",
         ".claude/skills/oracle-dependency-graph/SKILL.md",
-        ".claude/skills/dep-graph/SKILL.md",
-        ".claude/skills/plsql-flow/SKILL.md",
-        ".claude/skills/plsql-review/SKILL.md",
-        ".claude/agents/oracle-dba.md",
-        ".gitignore",
-        "tests/test_depgraph_skill.py",
-        "tests/test_plsql_flow.py",
-        "tests/conftest.py"
+        "docs/plano-oracle-dependency-graph.md",
+        "tests/test_depgraph_cli.py"
       ],
       "verify_cmd": "pytest -q -rs",
       "depends": [
-        "T-05"
+        "T-02",
+        "T-04"
       ],
       "cwd": null,
       "passes": true

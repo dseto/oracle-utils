@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-02",
+  "contract": "depgraph-scale",
+  "desc": "O limite de tamanho e a fronteira de schema continuam se comportando exatamente como antes quando a busca passa a ser em lote",
+  "files": [
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_bfs_limits.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_bfs_limits.py tests/test_depgraph_bfs.py -q",
+  "recorded_at": "2026-08-15T21:18:51.793334+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:a4a397272854c65f2ba2a14e82a6d4621f005640cc76fc888f6efc94af387cd1"
+}

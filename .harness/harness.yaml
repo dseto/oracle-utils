@@ -1,13 +1,56 @@
-﻿governance:
+governance:
   approval_policy: auto
   budget:
     max_tokens_per_task: 500000      # orientacao (advisory), nao enforcement
     max_tool_calls_per_task: 120
 
-  # extra_allowed_commands:
-  #   - <binario> <subcomando>
+  # Casa por PREFIXO: uma entrada libera o comando com qualquer argumento
+  # depois dela. Por isso varias entradas abaixo sao deliberadamente
+  # estreitas -- ver os comentarios.
+  extra_allowed_commands:
+    # Lint com alvo especifico. Sem isto so passa `ruff check .` (repo
+    # inteiro); checar um arquivo so e read-only e mais barato.
+    - ruff check
+
+    # Inspecao read-only de git. Todas barradas durante o contrato
+    # depgraph-scale, em situacoes onde a alternativa era trabalhar as
+    # cegas sobre o estado do repositorio.
+    - git fetch
+    - git show
+    - git rev-parse
+    - git branch
+    - git merge-tree
+
+    # Criacao da branch do contrato. `git checkout -b` de proposito, e
+    # NAO `git checkout`: o segundo permitiria `git checkout <arquivo>`,
+    # que descarta alteracao nao commitada. Mesma razao para preferir
+    # `git switch -c` a `git switch` solto, que aceitaria
+    # `--discard-changes`.
+    - git checkout -b
+    - git switch -c
+
+    # Leitura de PR. Entradas estreitas DE PROPOSITO: `gh pr` como
+    # prefixo liberaria `gh pr create` e `gh pr merge`. Abrir e mergear
+    # PR e decisao humana deliberada, e nao deve depender so da
+    # disciplina do agente quando da para travar na configuracao.
+    - gh pr view
+    - gh pr list
+    - gh pr diff
+    - gh pr checks
+
+  # NAO incluido, e a recomendacao e manter fora:
+  #   - python -c    executa Python arbitrario e com isso contorna toda a
+  #                  superficie de comando (subprocess). A fricção que ele
+  #                  resolvia -- inspecionar JSON -- ja e coberta pelas
+  #                  ferramentas de leitura.
+  #   - find/sed/rm/cat >   todos tem ferramenta dedicada melhor; abrir
+  #                  escrita por shell para economizar uma chamada nao
+  #                  compensa.
 
 verification:
+  # Religar (true) agora que o contrato depgraph-scale fechou: foi
+  # desligado so enquanto subagentes editavam arquivo de teste e rodavam
+  # pytest a cada iteracao, quando o hook viraria um prompt por acao.
   enforce_tdd: false
   test_command: "pytest -q"
   test_glob: "tests/**/*.py"

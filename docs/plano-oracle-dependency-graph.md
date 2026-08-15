@@ -265,3 +265,66 @@ distintos); T-04 depende de T-02+T-03; T-05 de T-04; T-06 de T-05.
   no `INDEX.md` se faltar grant.
 - **Volume**: caps explícitos (seção 4.4); fixture `FLOW_DEMO` cobre o aceite
   sem bater limite.
+
+## 9. Pós-MVP: contrato `depgraph-scale` (revisão)
+
+Este plano descreveu o MVP (T-01..T-06 acima, todos concluídos) validado
+contra `FLOW_DEMO` (3 objetos) — suficiente para provar o pipeline, mas
+não para os sistemas reais que motivaram a skill (10 a 50 mil objetos). O
+contrato `depgraph-scale` (`.harness/work/depgraph-scale/`) resolveu isso
+sem tocar o desenho acima — é extensão, não reescrita. Registrado aqui
+porque o MVP descrito nas seções 1-8 fica desatualizado em três pontos
+específicos:
+
+- **Extração deixou de ser por-objeto.** A seção 4.4 dizia "caps
+  explícitos" como a única resposta a volume; o gargalo real era round-trip
+  por objeto (`deps_direct`, um `SELECT` por nó da BFS). `_DepGraphEngine.run()`
+  passou a drenar a fila **por nível** (`_run_level_batch`), agrupando
+  pendentes por owner e chamando `deps_direct_batch` (`sql/flow/
+  deps_direct_batch.sql`) uma vez por owner/lote (`extract.BATCH_CHUNK_SIZE`
+  nomes por chamada) em vez de uma vez por objeto — round-trips caem de
+  O(nós) para O(níveis × owners × lotes). O mesmo padrão se aplica ao
+  enriquecimento (`statements`/`source` em lote por owner, T-03 do
+  contrato). O método em lote é **opcional** no `Protocol DepExtractor` —
+  extractor que não o implementa cai no caminho por-objeto original, e os
+  dois caminhos produzem `DepGraphResult` idêntico (byte a byte, inclusive
+  o corte de `max_objects`/`max_depth` — a paridade entre os dois caminhos
+  é o próprio critério de aceite do contrato). `deps_direct.sql`/`fetch_deps_direct`
+  originais (seção 2.1) continuam existindo e em uso — nada foi removido.
+
+- **`INDEX.md` deixou de ser sempre uma lista plana.** A seção 7 listava
+  "paginação do fechamento transitivo" como não-objetivo explícito do MVP,
+  adiado para "contrato futuro se houver volume" — foi o que aconteceu.
+  Acima de `--index-split` nós (novo, default `1000`), `INDEX.md` vira
+  sumário (estatísticas + `## PONTOS CEGOS` completo + `## Hubs`, os 20
+  objetos de maior grau entrada+saída) e o fechamento transitivo completo
+  é particionado por schema em `INDEX-<OWNER>.md`. Abaixo do limiar, nada
+  muda — é byte a byte o `INDEX.md` do MVP original (golden test
+  `tests/fixtures/depgraph_golden/` continua passando sem alteração).
+
+- **A raiz deixou de ser sempre uma só.** O MVP (seção 4.3/8) não previa
+  multi-raiz — cada execução gerava um grafo isolado por objeto. `depgraph`
+  agora aceita mais de uma raiz posicional; todas semeiam a MESMA BFS
+  (mesmo motor, mesmo visited-set) e saem num grafo único, com `--name`
+  obrigatório para nomear o diretório de saída quando há mais de uma raiz
+  (`<output>/<name>/` em vez de `<output>/<OWNER>.<OBJETO>/`). Cobre o
+  caso "grafo de um subsistema inteiro" sem precisar rodar N vezes e juntar
+  N grafos manualmente. `meta.json` ganhou `params.roots` (lista de todas
+  as raízes); `params.root_ref` continua existindo, agora como as raízes
+  separadas por vírgula quando há mais de uma (String, para não quebrar o
+  cabeçalho do `INDEX.md` que consome esse campo).
+
+- **`--max-objects`**: default subiu de 500 para 5000 (o valor do MVP
+  truncava sistemas reais com frequência), e `0` desliga o cap de
+  quantidade por completo — o aviso por `--max-depth` continua
+  independente. A tradução "0 = sem limite" acontece na borda do CLI
+  (`cli._effective_max_objects`); o motor da BFS em si continua tratando
+  `max_objects=0` como "cabe zero objetos" (mesmo contrato testado desde o
+  MVP) — nenhuma mudança de comportamento no módulo `depgraph.py` para
+  quem já usava a API Python diretamente com um valor numérico explícito.
+
+Detalhe completo (tarefas, critérios de aceite, decisões de design como o
+motivo do parâmetro `roots` ser aditivo em vez de `Union[RootLike,
+Sequence[RootLike]]`) em `.harness/work/depgraph-scale/spec.md` e
+`Plans.md`, e nos comentários de `plsqlflow/depgraph.py`/`plsqlflow/cli.py`
+que implementam cada item acima.

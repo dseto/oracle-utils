@@ -5,6 +5,7 @@ secao 5:
 
     <out_dir>/
     |-- INDEX.md
+    |-- INDEX-<OWNER>.md   # so se o grafo passar de --index-split nos (T-04)
     |-- edges.jsonl
     |-- nodes/<OWNER>.<OBJETO>.md
     |-- recompile.sql      # so se result.needs_recompile nao estiver vazio
@@ -230,17 +231,26 @@ def _render_dynsql_lines(outbound: Sequence[DepEdge], snippets: Dict[str, str]) 
 
 def render_node_md(
     node: DepNode,
-    edges: Sequence[DepEdge],
+    outbound: Sequence[DepEdge],
+    inbound: Sequence[DepEdge],
     nodes_by_ref: Dict[str, DepNode],
     snippets: Dict[str, str],
 ) -> str:
     """Monta o texto de `nodes/<OWNER>.<OBJETO>.md` -- secoes na ordem
     EXATA do plano (secao 5): Chama / Chamado por / Tabelas acessadas /
     Colunas / Triggers ativados / SQL Dinamico. Secao vazia e omitida
-    (cabecalho incluso)."""
+    (cabecalho incluso).
+
+    T-04 (escala): `outbound`/`inbound` chegam JA FILTRADOS pra este no --
+    `render_graph` indexa `result.edges` uma unica vez (`from_ref ->
+    [aresta]`, `to_ref -> [aresta]`) em vez de varrer a lista inteira a
+    cada chamada (O(nos) chamadas x O(arestas) por chamada = O(nos x
+    arestas), minutos de CPU num grafo de 20 mil nos / 200 mil arestas).
+    Unico chamador no repo e `render_graph`; a assinatura mudou de
+    `edges: Sequence[DepEdge]` pra `outbound`/`inbound` separados porque
+    filtrar aqui dentro exigiria receber a lista inteira de novo,
+    reintroduzindo o custo quadratico que esta mudanca elimina."""
     ref = _ref(node)
-    outbound = [e for e in edges if e.from_ref == ref]
-    inbound = [e for e in edges if e.to_ref == ref]
 
     sections: List[Tuple[str, List[str]]] = [
         ("## Chama (outbound)", _render_call_out_lines(ref, outbound)),
@@ -325,8 +335,118 @@ def _blind_spot_lines(result: DepGraphResult) -> List[str]:
     return lines
 
 
+# T-04 (escala): acima de `--index-split` nos, o INDEX.md por-no vira
+# ilegivel (20 mil linhas so na secao de fechamento transitivo) -- este
+# limiar decide entre o formato flat de sempre e o sumario com hubs +
+# particao por owner. `_DEFAULT_INDEX_SPLIT` espelha o default de
+# `cli.build_depgraph_arg_parser` (`--index-split`, default 1000) e so e
+# usado quando `meta_params` nao traz a chave "index_split" -- chamadores
+# antigos (ex.: `META_PARAMS` de tests/test_depgraph_render.py, que nao
+# conhece esta tarefa) continuam produzindo o formato flat sem precisar
+# saber que o limiar existe, e os golden tests (grafo de 5 nos) nunca
+# cruzam o limiar de qualquer forma.
+_DEFAULT_INDEX_SPLIT = 1000
+_HUB_LIMIT = 20
+
+
+def _closure_section_lines(result: DepGraphResult) -> List[str]:
+    """`## Fechamento transitivo` no formato FLAT de sempre -- lista uma
+    linha por no. So chamada abaixo do limiar; preserva byte a byte o
+    golden test (`tests/fixtures/depgraph_golden/INDEX.md`)."""
+    lines = ["## Fechamento transitivo"]
+    for node in sorted(result.nodes, key=lambda n: (n.owner, n.object_name)):
+        marker = " (leaf)" if node.is_leaf else ""
+        lines.append("- {} [{}]{}".format(_ref(node), node.object_type, marker))
+    lines.append("")
+    return lines
+
+
+def _degree_counts(result: DepGraphResult) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """Uma unica passada por `result.edges` contando entrada/saida por
+    `ref` -- O(arestas), nao O(nos x arestas). Refs que nao correspondem a
+    nenhum no do grafo (UNKNOWN_TARGET = "?") entram no dicionario mas
+    nunca sao consultadas (nenhum `DepNode` tem essa ref), entao nao viram
+    hub por engano."""
+    out_count: Dict[str, int] = {}
+    in_count: Dict[str, int] = {}
+    for e in result.edges:
+        out_count[e.from_ref] = out_count.get(e.from_ref, 0) + 1
+        in_count[e.to_ref] = in_count.get(e.to_ref, 0) + 1
+    return out_count, in_count
+
+
+def _top_hubs(result: DepGraphResult) -> List[Tuple[DepNode, int, int]]:
+    """Os `_HUB_LIMIT` nos de maior grau (entrada+saida), desempate
+    deterministico por `(-grau, owner, object_name)` -- sem isso, duas
+    geracoes do MESMO `DepGraphResult` poderiam listar hubs empatados em
+    ordem diferente (dict/set nao tem ordem garantida entre processos)."""
+    out_count, in_count = _degree_counts(result)
+    candidates = [
+        (node, in_count.get(_ref(node), 0), out_count.get(_ref(node), 0)) for node in result.nodes
+    ]
+    candidates.sort(key=lambda triple: (-(triple[1] + triple[2]), triple[0].owner, triple[0].object_name))
+    return candidates[:_HUB_LIMIT]
+
+
+def _hub_section_lines(result: DepGraphResult) -> List[str]:
+    """`## Hubs` -- "por onde comecar" do consumidor num grafo grande: os
+    objetos mais conectados, com as contagens visiveis (plano, secao
+    escopo item 4)."""
+    lines = ["## Hubs"]
+    for node, in_count, out_count in _top_hubs(result):
+        total = in_count + out_count
+        lines.append(
+            "- {} [{}] (grau: {}, entrada: {}, saída: {})".format(
+                _ref(node), node.object_type, total, in_count, out_count
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _nodes_by_owner(result: DepGraphResult) -> Dict[str, List[DepNode]]:
+    grouped: Dict[str, List[DepNode]] = {}
+    for node in result.nodes:
+        grouped.setdefault(node.owner, []).append(node)
+    return grouped
+
+
+def index_owner_filename(owner: str) -> str:
+    return "INDEX-{}.md".format(sanitize_component(owner))
+
+
+def _partition_summary_lines(result: DepGraphResult) -> List[str]:
+    """Substitui `## Fechamento transitivo` quando o grafo passa do
+    limiar: em vez da lista de nos inteira, aponta os arquivos
+    `INDEX-<OWNER>.md` com a contagem de cada um -- o consumidor sabe onde
+    procurar sem abrir todos."""
+    counts: Dict[str, int] = {}
+    for node in result.nodes:
+        counts[node.owner] = counts.get(node.owner, 0) + 1
+
+    lines = ["## Fechamento transitivo"]
+    for owner in sorted(counts):
+        lines.append("- {} ({} objetos)".format(index_owner_filename(owner), counts[owner]))
+    lines.append("")
+    return lines
+
+
+def render_index_owner_md(owner: str, nodes: Sequence[DepNode]) -> str:
+    """`INDEX-<OWNER>.md` -- fechamento transitivo de UM schema, no MESMO
+    formato de linha (`- OWNER.OBJETO [TIPO]`, sufixo ` (leaf)`) que o
+    `INDEX.md` flat usa abaixo do limiar -- quem ja sabe grepar o formato
+    de hoje continua sabendo, so muda o arquivo onde procurar."""
+    lines = ["# Fechamento transitivo: {}".format(owner), ""]
+    for node in sorted(nodes, key=lambda n: (n.owner, n.object_name)):
+        marker = " (leaf)" if node.is_leaf else ""
+        lines.append("- {} [{}]{}".format(_ref(node), node.object_type, marker))
+    return _finalize(lines)
+
+
 def render_index_md(result: DepGraphResult, meta_params: Dict[str, Any]) -> str:
     root_ref = meta_params.get("root_ref")
+    index_split = int(meta_params.get("index_split", _DEFAULT_INDEX_SPLIT))
+
     lines: List[str] = []
     lines.append("# Grafo de dependências{}".format(": {}".format(root_ref) if root_ref else ""))
     lines.append("")
@@ -336,15 +456,19 @@ def render_index_md(result: DepGraphResult, meta_params: Dict[str, Any]) -> str:
         lines.append("- {}: {}".format(key, result.stats[key]))
     lines.append("")
 
-    # Fechamento transitivo: lista flat de tudo que a raiz alcança (plano,
-    # secao 5) -- evita o consumidor ter que refazer BFS manual so pra
-    # saber "quais objetos existem neste grafo".
-    lines.append("## Fechamento transitivo")
-    for node in sorted(result.nodes, key=lambda n: (n.owner, n.object_name)):
-        marker = " (leaf)" if node.is_leaf else ""
-        lines.append("- {} [{}]{}".format(_ref(node), node.object_type, marker))
-    lines.append("")
+    if len(result.nodes) > index_split:
+        # Grafo grande: sumario (hubs + particao por owner) em vez da
+        # lista flat -- ver secao 4 do escopo do contrato depgraph-scale.
+        lines.extend(_hub_section_lines(result))
+        lines.extend(_partition_summary_lines(result))
+    else:
+        # Abaixo do limiar: NADA MUDA -- formato flat byte a byte igual ao
+        # golden test (tests/fixtures/depgraph_golden/INDEX.md).
+        lines.extend(_closure_section_lines(result))
 
+    # PONTOS CEGOS e obrigatorio nos DOIS regimes, completo, nunca
+    # truncado -- e a garantia de honestidade da skill (contrato,
+    # escopo item 4).
     lines.append("## PONTOS CEGOS")
     blind_lines = _blind_spot_lines(result)
     if blind_lines:
@@ -462,11 +586,36 @@ def render_graph(
         nodes_dir.mkdir(parents=True, exist_ok=True)
 
     nodes_by_ref = {_ref(n): n for n in result.nodes}
+
+    # Indice de arestas (T-04, escala): duas passadas sobre `result.edges`
+    # em vez de uma varredura por no. `dict.setdefault(...).append(...)`
+    # preserva a ordem de chegada de `result.edges` (que ja chega ordenado
+    # de `to_result()`) -- isso importa porque os `sorted(...)` estaveis
+    # dentro de `_render_call_out_lines`/`_render_table_access_lines`/etc.
+    # dependem da ordem relativa de entrada pra desempatar chaves iguais;
+    # reordenar aqui mudaria bytes do node .md pra arestas empatadas.
+    # `to_ref`/`from_ref` que nao correspondem a nenhum no do grafo
+    # (UNKNOWN_TARGET = "?", emitido por depgraph_enrich quando o SQL
+    # dinamico nao resolve o alvo) simplesmente nunca sao consultados --
+    # nao ha KeyError porque o acesso abaixo usa `.get(ref, [])`.
+    outbound_by_ref: Dict[str, List[DepEdge]] = {}
+    inbound_by_ref: Dict[str, List[DepEdge]] = {}
+    for e in result.edges:
+        outbound_by_ref.setdefault(e.from_ref, []).append(e)
+        inbound_by_ref.setdefault(e.to_ref, []).append(e)
+
     written: List[Path] = []
 
     for node in result.nodes:
+        ref = _ref(node)
         path = nodes_dir / node_filename(node.owner, node.object_name)
-        text = render_node_md(node, result.edges, nodes_by_ref, result.snippets)
+        text = render_node_md(
+            node,
+            outbound_by_ref.get(ref, []),
+            inbound_by_ref.get(ref, []),
+            nodes_by_ref,
+            result.snippets,
+        )
         _write_text(path, text)
         written.append(path)
 
@@ -477,6 +626,28 @@ def render_graph(
     index_path = out_dir / "INDEX.md"
     _write_text(index_path, render_index_md(result, meta_params))
     written.append(index_path)
+
+    # INDEX-<OWNER>.md (T-04, escala): so existem quando o grafo passa do
+    # limiar (mesma conta de `render_index_md`, refeita aqui pra decidir
+    # quais arquivos gravar). Cada owner presente no grafo ganha uma
+    # particao; owners que saem do grafo entre duas geracoes (ou o grafo
+    # inteiro cai de volta abaixo do limiar) nao podem deixar arquivo
+    # orfao pra tras -- mesma logica de `nodes/*.md`/`recompile.sql`
+    # acima: o diretorio inteiro reflete o `result` atual, nao residuo de
+    # execucao passada.
+    index_split = int(meta_params.get("index_split", _DEFAULT_INDEX_SPLIT))
+    expected_partition_names: List[str] = []
+    if len(result.nodes) > index_split:
+        for owner, owner_nodes in sorted(_nodes_by_owner(result).items()):
+            filename = index_owner_filename(owner)
+            expected_partition_names.append(filename)
+            partition_path = out_dir / filename
+            _write_text(partition_path, render_index_owner_md(owner, owner_nodes))
+            written.append(partition_path)
+
+    for old_partition in out_dir.glob("INDEX-*.md"):
+        if old_partition.name not in expected_partition_names:
+            old_partition.unlink()
 
     if result.needs_recompile:
         recompile_path = out_dir / "recompile.sql"
