@@ -1,0 +1,11 @@
+# GESTAO.FLOW_DEMO_AUDIT
+- tipo: TABLE | status: VALID | plscope: não
+
+## Chamado por (inbound)
+- GESTAO.TRG_FLOW_DEMO_LOG (CALL)
+
+## Colunas
+- ID NUMBER NOT NULL
+- LOG_ID NUMBER NULL
+- ACAO VARCHAR2(30) NULL
+- CRIADO_EM TIMESTAMP(6) NULL

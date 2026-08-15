@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-05",
+  "contract": "oracle-depgraph",
+  "desc": "Gerar o grafo pela linha de comando funciona sem quebrar o uso atual do pacote, nunca recebe senha por argumento e sinaliza cada situacao com um codigo de saida proprio",
+  "files": [
+    "plsqlflow/cli.py",
+    "tests/test_depgraph_cli.py",
+    "sql/flow/triggers_any_status.sql",
+    "plsqlflow/queries.py",
+    "plsqlflow/extract.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_cli.py -q",
+  "recorded_at": "2026-08-15T15:00:08.269137+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:02b47df79bef46031749077460dba6caf3048857e2d595f6d717d9db354cf7b8"
+}

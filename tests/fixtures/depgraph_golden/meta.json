@@ -1,0 +1,14 @@
+{
+  "chain_hash": "1e5cfb4735e571c51530bf7bbb33dc36ec2c1fa9efb900aa25fdb2e7f9bc8d71",
+  "extractor_version": "0.1.0",
+  "params": {
+    "dynamic_window": 30,
+    "max_depth": 20,
+    "max_objects": 500,
+    "root_ref": "GESTAO.FLOW_DEMO",
+    "stop_schemas": [
+      "SYS",
+      "SYSTEM"
+    ]
+  }
+}

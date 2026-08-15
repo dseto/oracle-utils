@@ -77,6 +77,7 @@ pkg_vendas.pkb:87  [ALTO] WHEN OTHERS THEN NULL engole erro → logar backtrace 
 Fechar com no máximo 3 recomendações priorizadas (o que corrigir primeiro e por quê).
 
 ## Regras
+- Antes de consultar `all_dependencies` ad-hoc para checar impacto/uso de um objeto, grepe `oracle-graph/<OWNER>.<OBJETO>/` (se existir) — ver [/oracle-dependency-graph](../oracle-dependency-graph/SKILL.md).
 - Leitura apenas: `all_source` e views de apoio (`all_dependencies`, `all_procedures`) via SELECT. Nunca compilar, criar ou alterar objeto.
 - Correções são entregues como sugestão/trecho de código para o usuário aplicar — nunca aplicadas no banco.
 - Sem finding inventado: se uma categoria não tem problema, dizer "sem findings" nela.

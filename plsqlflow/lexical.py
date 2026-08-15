@@ -29,6 +29,20 @@ KEYWORDS = {
 _IDENT_CHARS = r"[A-Za-z_][A-Za-z0-9_\$#]*"
 _CALL_CANDIDATE_RE = re.compile(r"\b({})\b\s*(?=[(;])".format(_IDENT_CHARS))
 
+# Modo "fragmento SQL" (plano, secao 2.3 / T-03): find_call_candidates acima
+# so serve para candidato a CHAMADA de subprograma (identificador seguido de
+# '(' ou ';') -- nao casa nome de tabela num comando SQL (`FROM x WHERE ...`
+# nao tem '(' nem ';' logo apos `x`). _OBJECT_REF_RE busca identificador em
+# posicao de OBJETO referenciado, reconhecido pela palavra-chave que o
+# precede: FROM, JOIN, INTO, UPDATE. Cobre tambem DELETE FROM (termina em
+# FROM) e MERGE INTO (termina em INTO) sem precisar de alternativas extras.
+# Nomes qualificados (OWNER.TABELA) sao capturados como uma unica unidade.
+_QUALIFIED_IDENT = r"{ident}(?:\.{ident})?".format(ident=_IDENT_CHARS)
+_OBJECT_REF_RE = re.compile(
+    r"\b(?:FROM|JOIN|INTO|UPDATE)\s+({})".format(_QUALIFIED_IDENT),
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class Literal:
@@ -107,6 +121,30 @@ def find_call_candidates(
             if upper in keyword_set or upper in local_set:
                 continue
             candidates.append((name, line_no))
+    return candidates
+
+
+def find_object_reference_candidates(clean_lines: Sequence[str]) -> List[Tuple[str, int]]:
+    """Extrai identificadores em posicao de OBJETO (tabela/view) num
+    fragmento SQL/PL-SQL ja limpo (sem comentarios/literais -- aplicar
+    ``strip_comments_and_literals`` antes de chamar esta funcao).
+
+    Complementa ``find_call_candidates``: aquele busca candidato a chamada
+    de subprograma; este busca candidato a objeto referenciado num comando
+    SQL (SELECT/INSERT/UPDATE/DELETE/MERGE ou fragmento de SQL dinamico),
+    reconhecido pela palavra-chave FROM/JOIN/INTO/UPDATE que o precede.
+    Nomes qualificados (``OWNER.TABELA``) saem como uma unica unidade.
+
+    Nao e um parser SQL -- heuristica pratica com limitacao documentada:
+    ``SELECT col INTO v_var FROM tabela`` tambem casa ``v_var`` (variavel,
+    nao tabela) como candidato, porque a heuristica so olha a palavra-chave
+    precedente. O residual de ambiguidade fica para ``classify_candidates``
+    decidir confianca via catalogo, mesmo espirito do restante do modulo.
+    """
+    candidates: List[Tuple[str, int]] = []
+    for line_no, line in enumerate(clean_lines, start=1):
+        for match in _OBJECT_REF_RE.finditer(line):
+            candidates.append((match.group(1), line_no))
     return candidates
 
 

@@ -1,0 +1,18 @@
+{
+  "feature_id": "T-01",
+  "contract": "oracle-depgraph",
+  "desc": "Catalogo de objetos e colunas de tabela ficam disponiveis ao extrator, com data de ultimo DDL para detectar grafo desatualizado",
+  "files": [
+    "sql/flow/object_catalog.sql",
+    "sql/flow/tab_columns.sql",
+    "plsqlflow/queries.py",
+    "plsqlflow/extract.py",
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_unit.py",
+    "tests/test_plsqlflow_unit.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_unit.py tests/test_conventions.py -q",
+  "recorded_at": "2026-08-15T15:00:09.454035+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:9047369d017a86878fae3954aab85860dca6b23444f7a47fbdf770621f74b49e"
+}

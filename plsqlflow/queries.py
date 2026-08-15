@@ -13,9 +13,12 @@ QUERY_NAMES = (
     "fetch_source.sql",
     "deps_direct.sql",
     "triggers_for_tables.sql",
+    "triggers_any_status.sql",
     "fk_cascade.sql",
     "type_hierarchy.sql",
     "resolve_synonym.sql",
+    "object_catalog.sql",
+    "tab_columns.sql",
 )
 
 

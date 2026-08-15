@@ -10,6 +10,8 @@ description: Gera diagrama mermaid do caminho completo de execução de uma proc
 - Parâmetros (opcionais): resolvem overload (via `ALL_ARGUMENTS`), anotam o nó raiz e habilitam o modo dinâmico.
 - Opções: `max_depth` (default 10), `incluir_sys` (default: `DBMS_*`/`UTL_*` viram folhas), modo `estatico` (default) ou `dinamico`.
 
+Vai responder várias perguntas de impacto sobre o mesmo objeto (não só uma cadeia de execução)? Ou já existe `oracle-graph/` em disco? Use [/oracle-dependency-graph](../oracle-dependency-graph/SKILL.md) — grão objeto, fechamento transitivo completo persistido, consumido por grep.
+
 ## Passo 1 — rodar o script (substitui a montagem manual do grafo)
 
 ```
@@ -52,7 +54,7 @@ o script faz internamente, por etapa (nenhuma dessas etapas passa por LLM):
   (`ALL_STATEMENTS`) dá o SQL embutido — nós nascem com `confidence:
   "compiler"`.
 - **Camada B — léxica sobre ALL_SOURCE (fallback sem PL/Scope — biblioteca
-  pronta, AINDA NÃO ligada ao pipeline automático do script)**: o script
+  pronta, AINDA NÃO ligada à travessia automática deste script)**: o script
   confere `plscope_check.sql` antes de expandir qualquer objeto; se o
   objeto-alvo não estiver compilado com `IDENTIFIERS:ALL`/`STATEMENTS:ALL`,
   `python -m plsqlflow` **falha alto** com uma mensagem explicando o motivo
@@ -61,15 +63,25 @@ o script faz internamente, por etapa (nenhuma dessas etapas passa por LLM):
   do body começando com `wrapped` = código ofuscado, kind `"wrapped"`),
   `deps_direct.sql`/`ALL_DEPENDENCIES` e `plsqlflow/lexical.py`
   (tokeniza — remove comentários e literais preservando-os para o
-  `dynsql.py`, lista candidatos a chamada e classifica cada um em
-  `confidence: "lexical"`/`"heuristic"`) já existem prontos e testados
-  offline como biblioteca (`tests/test_plsqlflow_lexical.py`), mas ligar
-  essa camada à travessia automática do grafo (`plsqlflow/graph.py`) é
-  trabalho de um contrato futuro — achado registrado no blind review do
-  contrato `plsqlflow-py`. Até lá, sem PL/Scope disponível o assistente
-  monta esse trecho do grafo manualmente (fluxo v1: ler `ALL_SOURCE`,
-  aplicar a mesma lógica de tokenização/candidatos à mão) se o usuário
-  quiser prosseguir mesmo assim.
+  `dynsql.py`; `find_call_candidates` lista candidatos a CHAMADA de
+  subprograma e classifica cada um em `confidence: "lexical"`/
+  `"heuristic"`) já existem prontos e testados offline como biblioteca
+  (`tests/test_plsqlflow_lexical.py`), mas ligar `find_call_candidates` à
+  travessia automática do grafo deste comando (`plsqlflow/graph.py`)
+  continua fora do pipeline — achado registrado no blind review do
+  contrato `plsqlflow-py`, ainda não endereçado aqui. Até lá, sem PL/Scope
+  disponível o assistente monta esse trecho do grafo manualmente (fluxo v1:
+  ler `ALL_SOURCE`, aplicar a mesma lógica de tokenização/candidatos à mão)
+  se o usuário quiser prosseguir mesmo assim.
+
+  **Atualização (contrato `oracle-depgraph`)**: um modo IRMÃO do mesmo
+  módulo — `lexical.find_object_reference_candidates` (fragmento SQL, não
+  candidato a chamada) — foi ligado ao pipeline de
+  [/oracle-dependency-graph](../oracle-dependency-graph/SKILL.md) para
+  classificar SQL dinâmico como `partial`. Isso não muda o comportamento
+  deste script (`/plsql-flow`): `find_call_candidates` continua sem uso
+  automático aqui, e sem PL/Scope disponível `python -m plsqlflow` continua
+  falhando alto como descrito acima.
 - **Triggers e cascata FK**: para cada `INSERT`/`UPDATE`/`DELETE` estático
   sobre uma tabela, `triggers_for_tables.sql` (`ALL_TRIGGERS`) traz
   triggers `ENABLED` com evento/timing compatível → aresta pontilhada

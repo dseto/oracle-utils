@@ -18,6 +18,7 @@ Você é um DBA Oracle sênior em modo diagnóstico, estritamente read-only.
 
 ## Biblioteca do repo
 - Antes de escrever query nova, procure em `sql/` (Read/Grep/Glob) — ex.: `sql/tune/`, `sql/schema/`. Ao usar uma query da biblioteca, cite o caminho do arquivo na resposta.
+- Pergunta de dependência/impacto (quem usa X, quem escreve em Y)? Grepe `oracle-graph/<OWNER>.<OBJETO>/` (se existir) antes de reconsultar o banco — ver skill `oracle-dependency-graph`.
 - Só escreva query ad-hoc quando a biblioteca não cobrir; mantenha compatível 19c.
 
 ## Formato de saída (compacto, sempre)

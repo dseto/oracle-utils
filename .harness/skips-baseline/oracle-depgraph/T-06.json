@@ -1,0 +1,14 @@
+[
+  {
+    "nodeid": "tests\\test_depgraph_skill.py:306",
+    "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+  },
+  {
+    "nodeid": "tests\\test_plsql_flow.py:208",
+    "reason": "evidencia e2e ja varrida por 'harness finish' (.harness/scratch/ e efemero por design) -- conteudo validado no contrato de origem"
+  },
+  {
+    "nodeid": "tests\\test_plsqlflow_skill.py:276",
+    "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+  }
+]

@@ -13,6 +13,8 @@ description: Gera grafo de dependências (mermaid flowchart) de um objeto Oracle
 ## Pré-requisito
 Conexão via SQLcl MCP (alias `dev` ou `hml`). Se MCP indisponível, pedir ao usuário a saída das queries de `sql/viz/` e montar o grafo offline.
 
+**Vai fazer várias perguntas de impacto sobre o mesmo objeto, ou já existe `oracle-graph/` em disco?** Prefira [/oracle-dependency-graph](../oracle-dependency-graph/SKILL.md) — grava o fechamento transitivo uma vez e responde por grep, sem reconsultar o banco a cada pergunta. Esta skill (`/dep-graph`) é para uma olhada visual pontual (1 round-trip, mermaid no chat).
+
 ## Fluxo
 
 ### 1. Coletar dependências (somente SELECT)

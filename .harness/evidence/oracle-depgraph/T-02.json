@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-02",
+  "contract": "oracle-depgraph",
+  "desc": "Percorrer as dependencias a partir da raiz visita cada objeto uma unica vez, para nas fronteiras do sistema e avisa quando atinge o limite de tamanho em vez de truncar calado",
+  "files": [
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_bfs.py",
+    "tests/fixtures/depgraph_extract.json"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_bfs.py -q",
+  "recorded_at": "2026-08-15T14:49:21.670795+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:86124f1b4faf5e0c95c1455180d77fa4ba99c81d55eb021483e16d1e58e675f5"
+}
