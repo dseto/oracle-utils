@@ -17,8 +17,12 @@ Cobre a Entrega 3 do contrato oracle-depgraph:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / ".claude" / "skills" / "oracle-dependency-graph" / "SKILL.md"
@@ -293,11 +297,6 @@ def test_plsql_flow_skill_still_covers_baseline_sections():
 # carrega de .harness/scratch/dev_creds.json quando existir). Prova o caminho
 # que nenhum teste offline cobre: SQL real batendo no dicionario do Oracle --
 # foi assim que o contrato anterior descobriu um ORA-00933 invisivel no mock.
-
-import os
-import shutil
-
-import pytest
 
 LIVE_ENV = ("PLSQLFLOW_USER", "PLSQLFLOW_PWD", "PLSQLFLOW_DSN")
 EVIDENCE = REPO / ".harness" / "scratch" / "depgraph-evidence.md"
