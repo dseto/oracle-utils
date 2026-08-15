@@ -1,0 +1,22 @@
+{
+  "feature_id": "T-01",
+  "contract": "fix-plsql-flow-evidence-test",
+  "desc": "Testes de tests/test_plsql_flow.py nao dependem mais de arquivo efemero em .harness/scratch/ e a suite completa fecha 100% verde",
+  "files": [
+    "tests/test_plsql_flow.py"
+  ],
+  "verify_cmd": "pytest -q -rs",
+  "recorded_at": "2026-08-15T19:40:29.804915+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:426e465d26c2a43636abf427211e98475f19db944c5347684ce3d38d6d6e9324",
+  "skips": {
+    "count": 1,
+    "zero_collected": false,
+    "items": [
+      {
+        "nodeid": "tests\\test_plsqlflow_skill.py:276",
+        "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+      }
+    ]
+  }
+}

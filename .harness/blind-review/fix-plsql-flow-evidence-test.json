@@ -1,0 +1,11 @@
+{
+  "contract": "fix-plsql-flow-evidence-test",
+  "verdicts": [
+    {
+      "verdict": "pass",
+      "evidence": "tests/test_plsql_flow.py: nenhum teste le/escreve/asserta arquivo em .harness/scratch/ (grep confirmado); pytest -q -rs isolado no arquivo = 16 passed; suite completa pytest -q -rs = 86 passed, 1 skipped (skip = live test gated por credenciais dev, motivo explicito em tests/test_plsqlflow_skill.py:276), 0 failed",
+      "files_hash": "sha256:426e465d26c2a43636abf427211e98475f19db944c5347684ce3d38d6d6e9324",
+      "recorded_at": "2026-08-15T19:41:59.218785+00:00"
+    }
+  ]
+}

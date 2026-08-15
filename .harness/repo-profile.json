@@ -38,8 +38,8 @@
     }
   },
   "unknowns": [],
-  "analyzed_at": "2026-08-15T13:42:30.028674+00:00",
+  "analyzed_at": "2026-08-15T19:36:21.550949+00:00",
   "manifest_snapshot": {
-    "pyproject.toml": "fbf2de5c4099f0c368710a70aa781d7d037cac599c9c1a0a7c7321725ce225e7"
+    "pyproject.toml": "df965e59967a64bf6266542f82ab42a5804e5a1a95906c77eb9f6653c4bcb4ea"
   }
 }
