@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `depgraph-scale`
+Contrato: `dotenv-conn`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,11 +8,9 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | Percorrer as dependências consulta o banco uma vez por nível da busca em vez de uma vez por objeto, sem mudar o grafo resultante | done |
-| T-02 | O limite de tamanho e a fronteira de schema continuam se comportando exatamente como antes quando a busca passa a ser em lote | done |
-| T-03 | Classificar acessos a tabela e SQL dinâmico busca fonte e statements em lotes por schema, com o mesmo resultado de antes | done |
-| T-04 | Acima de um limiar de nós o índice vira um sumário com os objetos mais conectados, e o fechamento transitivo é separado por schema | done |
-| T-05 | O grafo aceita várias raízes num resultado único, o limite de objetos pode ser ampliado ou desligado, e a skill documenta o uso em sistemas gigantes | done |
+| T-01 | CLI flow/depgraph le credenciais do .env do diretorio onde e invocado, ambiente real ganha do arquivo | done |
+| T-02 | run-query.ps1 aceita -Connection env e resolve credenciais de variaveis de ambiente ou .env, sem expor a senha | done |
+| T-03 | Testes live rodam sozinhos em maquina com .env preenchido, e a documentacao das skills ensina o formato | done |
 
 ## Última atualização
 

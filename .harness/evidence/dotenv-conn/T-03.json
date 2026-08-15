@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-03",
+  "contract": "dotenv-conn",
+  "desc": "Testes live rodam sozinhos em maquina com .env preenchido, e a documentacao das skills ensina o formato",
+  "files": [
+    "tests/conftest.py",
+    ".claude/skills/plsql-flow/SKILL.md",
+    ".claude/skills/oracle-dependency-graph/SKILL.md",
+    "CLAUDE.md",
+    ".gitignore"
+  ],
+  "verify_cmd": "pytest -q -rs",
+  "recorded_at": "2026-08-15T22:54:17.493224+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:d60ae50d612091502797154d062c11f601c3e721b8efc1e2954981c3cbdb1137"
+}

@@ -1,86 +1,55 @@
 {
-  "contract": "depgraph-scale",
-  "compiled_at": "2026-08-15T21:18:09.546594+00:00",
+  "contract": "dotenv-conn",
+  "compiled_at": "2026-08-15T22:43:38.224468+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
-      "qualquer necessidade de DML/DDL no banco (o contrato e 100% somente-leitura)",
-      "necessidade de alterar plsqlflow/graph.py, mermaid.py ou report.py (modulos congelados por golden test do contrato plsqlflow-py)",
-      "qualquer mudanca que altere os bytes de tests/fixtures/depgraph_golden -- o grafo pequeno tem que continuar rendendo identico; se uma tarefa nao conseguir evitar isso, parar e devolver ao humano",
-      "T-02 (caps e fronteira sob lote) falhar a equivalencia com o caminho por-no: e sinal de que o recorte por nivel esta errado, nao de que o teste esta chato -- parar e devolver, nao afrouxar o teste",
-      "3 falhas consecutivas do mesmo verify_cmd sem causa nova identificada entre as tentativas"
+      "Senha aparecer em stdout, em evidencia de teste, em log ou na linha de comando de um processo (visivel em process list) em qualquer implementacao -- parar e redesenhar, nao mitigar",
+      "Qualquer necessidade de DML/DDL ou de conexao real ao banco (o contrato e 100% offline; toda prova usa .env temporario e dry-run)",
+      "3 falhas consecutivas do mesmo verify_cmd",
+      "Teste existente fora da superficie declarada precisar de mudanca de assercao -- devolver ao humano, nao ampliar superficie por conta propria"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "Percorrer as dependências consulta o banco uma vez por nível da busca em vez de uma vez por objeto, sem mudar o grafo resultante",
+      "desc": "CLI flow/depgraph le credenciais do .env do diretorio onde e invocado, ambiente real ganha do arquivo",
       "files": [
-        "plsqlflow/depgraph.py",
-        "tests/test_depgraph_bfs_batch.py"
+        "plsqlflow/db.py",
+        "tests/test_db_dotenv.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_bfs_batch.py tests/test_depgraph_bfs.py tests/test_depgraph_triggers.py -q",
+      "verify_cmd": "pytest tests/test_db_dotenv.py tests/test_plsqlflow_unit.py -q",
       "depends": [],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-02",
-      "desc": "O limite de tamanho e a fronteira de schema continuam se comportando exatamente como antes quando a busca passa a ser em lote",
+      "desc": "run-query.ps1 aceita -Connection env e resolve credenciais de variaveis de ambiente ou .env, sem expor a senha",
       "files": [
-        "plsqlflow/depgraph.py",
-        "tests/test_depgraph_bfs_limits.py"
+        "scripts/run-query.ps1",
+        "tests/test_run_query_env.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_bfs_limits.py tests/test_depgraph_bfs.py -q",
-      "depends": [
-        "T-01"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-03",
-      "desc": "Classificar acessos a tabela e SQL dinâmico busca fonte e statements em lotes por schema, com o mesmo resultado de antes",
-      "files": [
-        "plsqlflow/cli.py",
-        "tests/test_depgraph_enrich_batch.py"
-      ],
-      "verify_cmd": "pytest tests/test_depgraph_enrich_batch.py tests/test_depgraph_cli.py -q",
+      "verify_cmd": "pytest tests/test_run_query_env.py -q",
       "depends": [],
       "cwd": null,
       "passes": true
     },
     {
-      "id": "T-04",
-      "desc": "Acima de um limiar de nós o índice vira um sumário com os objetos mais conectados, e o fechamento transitivo é separado por schema",
+      "id": "T-03",
+      "desc": "Testes live rodam sozinhos em maquina com .env preenchido, e a documentacao das skills ensina o formato",
       "files": [
-        "plsqlflow/depgraph_render.py",
-        "plsqlflow/cli.py",
-        "tests/test_depgraph_index_split.py"
-      ],
-      "verify_cmd": "pytest tests/test_depgraph_index_split.py tests/test_depgraph_render.py -q",
-      "depends": [
-        "T-03"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-05",
-      "desc": "O grafo aceita várias raízes num resultado único, o limite de objetos pode ser ampliado ou desligado, e a skill documenta o uso em sistemas gigantes",
-      "files": [
-        "plsqlflow/cli.py",
-        "plsqlflow/depgraph.py",
-        "tests/test_depgraph_multiroot.py",
+        "tests/conftest.py",
+        ".claude/skills/plsql-flow/SKILL.md",
         ".claude/skills/oracle-dependency-graph/SKILL.md",
-        "docs/plano-oracle-dependency-graph.md",
-        "tests/test_depgraph_cli.py"
+        "CLAUDE.md",
+        ".gitignore"
       ],
       "verify_cmd": "pytest -q -rs",
       "depends": [
-        "T-02",
-        "T-04"
+        "T-01",
+        "T-02"
       ],
       "cwd": null,
       "passes": true

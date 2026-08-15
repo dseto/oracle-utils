@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-02",
+  "contract": "dotenv-conn",
+  "desc": "run-query.ps1 aceita -Connection env e resolve credenciais de variaveis de ambiente ou .env, sem expor a senha",
+  "files": [
+    "scripts/run-query.ps1",
+    "tests/test_run_query_env.py"
+  ],
+  "verify_cmd": "pytest tests/test_run_query_env.py -q",
+  "recorded_at": "2026-08-15T22:50:16.943397+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:aaa3127c6b5fd4152978176d0836e9991c0397970d6c6d3b108fe4fd80c8afe0"
+}

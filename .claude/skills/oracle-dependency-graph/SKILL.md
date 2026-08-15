@@ -46,6 +46,16 @@ ambiente diretas `PLSQLFLOW_USER`/`PLSQLFLOW_PWD`/`PLSQLFLOW_DSN`. O alvo é
 **sempre `owner.objeto`, sem subprograma** — o grão aqui é o objeto, não a
 chamada individual (diferente do modo flow).
 
+As mesmas 3 variáveis (sem `--conn`) também podem vir de um arquivo `.env`
+no diretório onde o comando é invocado, em vez de exportadas na mão a cada
+sessão — variável já definida no ambiente real sempre ganha do arquivo, e
+`.env` é gitignored. Exemplo:
+```
+PLSQLFLOW_USER=gestao
+PLSQLFLOW_PWD=troque-por-sua-senha
+PLSQLFLOW_DSN=localhost:1521/XEPDB1
+```
+
 Flags (todas opcionais, default entre parênteses):
 - `--output DIR` (`./oracle-graph`) — diretório base; o grafo é gravado em
   `<output>/<OWNER>.<OBJETO>/`.

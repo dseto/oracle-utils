@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-01",
+  "contract": "dotenv-conn",
+  "desc": "CLI flow/depgraph le credenciais do .env do diretorio onde e invocado, ambiente real ganha do arquivo",
+  "files": [
+    "plsqlflow/db.py",
+    "tests/test_db_dotenv.py"
+  ],
+  "verify_cmd": "pytest tests/test_db_dotenv.py tests/test_plsqlflow_unit.py -q",
+  "recorded_at": "2026-08-15T22:48:41.523994+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:dd8fa875f237eddc380eafa56eb513f477679f522c5d65cb0c1c61659c0ab47a"
+}

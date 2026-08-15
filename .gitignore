@@ -25,3 +25,4 @@ desktop.ini
 # banco, regeneravel a qualquer momento (python -m plsqlflow depgraph),
 # pode ficar grande - nao versionar.
 oracle-graph/
+.env

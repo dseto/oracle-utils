@@ -1,0 +1,11 @@
+{
+  "contract": "dotenv-conn",
+  "verdicts": [
+    {
+      "verdict": "pass",
+      "evidence": "As 3 provas declaradas passam (29+7+305 testes, ruff limpo). Hermeticidade do injected-env confirmada por teste externo ao repo: os.environ identico antes/depois, o arquivo do cwd nunca lido (plsqlflow/db.py:90). Precedencia (ambiente real vence o arquivo) nos 3 consumidores: db.py:101 override=False, run-query.ps1:64-68, conftest.py:23-25,42-44 setdefault; nenhum override=True no repo. Nao-vazamento de senha confirmado EMPIRICAMENTE com senha-sentinela, tanto em -DryRun quanto na invocacao real do SQLcl empacotado: sentinela ausente de stdout/stderr, argv so com -S /nolog (run-query.ps1:141), credencial so na linha connect dentro do temporario (:129-132), e nenhum temporario sobrando apos erro (:151-153). conftest.py:43 filtra por prefixo PLSQLFLOW_. run-query.ps1 sem nenhum byte fora de ASCII. Achado NAO bloqueante registrado: tests/test_run_query_env.py:176-188 prova a nao-regressao do modo antigo so no caminho -DryRun, que sai antes da invocacao real do SQLcl, entao a equivalencia em runtime depende de leitura de codigo, nao de teste executado.",
+      "files_hash": "sha256:871af10e885bf0706aa50d060e171fa3b87d11415a6bd4888e511f0aa024d3a9",
+      "recorded_at": "2026-08-15T23:02:34.790790+00:00"
+    }
+  ]
+}

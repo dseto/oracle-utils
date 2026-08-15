@@ -10,6 +10,13 @@ Toolkit de skills Claude Code para desenvolvedores e DBAs Oracle Database 19c.
 - **Compatibilidade dupla 19c/21c**: antes de recomendação específica de release, conferir versão da conexão ativa (`v$instance.version_full`). Nenhuma query ou sugestão pode usar sintaxe/feature acima de 19c (baseline). Features 21c-only (ex.: JSON nativo binário default, SQL macros, JavaScript MLE) nunca em scripts do repo.
 - **Não há conexão de produção nesta máquina.** Se um alias novo aparecer, confirmar ambiente antes de usar.
 - SQLcl e JDK são portáteis do repo: `tools\sqlcl`, `tools\jdk`. Processos SQLcl precisam de `JAVA_HOME=C:\Projetos\oracle-utils\tools\jdk` (o wrapper `scripts\run-query.ps1` configura sozinho).
+- **Credencial via `.env`**: forma suportada de passar credencial sem exportar variável de ambiente na mão a cada sessão. Chaves: `PLSQLFLOW_USER`, `PLSQLFLOW_PWD`, `PLSQLFLOW_DSN` (e, por alias, `PLSQLFLOW_PWD_<ALIAS>`). Precedência: variável já definida no ambiente real sempre ganha do arquivo. O `.env` é procurado a partir do diretório de onde o comando é invocado (o CLI Python sobe os diretórios pais a partir dele; `scripts\run-query.ps1 -Connection env` olha só o diretório corrente) — ou seja, é um arquivo do projeto **consumidor**, não do pacote oracle-utils. A raiz deste repo também pode ter o seu, usado pelos testes live (`tests/conftest.py` lê dele apenas as chaves `PLSQLFLOW_*`). É gitignored — nunca commitar. Exemplo (valores fictícios):
+  ```
+  PLSQLFLOW_USER=gestao
+  PLSQLFLOW_PWD=troque-por-sua-senha
+  PLSQLFLOW_DSN=localhost:1521/XEPDB1
+  ```
+- **Fallback sem MCP**: `scripts\run-query.ps1 -Connection env` resolve as mesmas 3 chaves do ambiente do processo ou de um `.env` do diretório corrente; a credencial nunca vai na linha de comando do SQLcl. Use `-DryRun` para conferir user/DSN resolvidos sem senha e sem banco.
 
 ## Regras de segurança (guarda leve)
 
