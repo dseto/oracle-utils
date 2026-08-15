@@ -249,7 +249,11 @@ def test_depgraph_parser_default_flags():
     assert args.output == "./oracle-graph" == cli.DEFAULT_OUTPUT_DIR
     assert args.stop_schemas == "SYS,SYSTEM" == cli.DEFAULT_STOP_SCHEMAS_ARG
     assert args.dynamic_window == 30 == cli.DEFAULT_DYNAMIC_WINDOW
-    assert args.max_objects == 500 == cli.DEFAULT_MAX_OBJECTS
+    # 5000, nao 500: o contrato depgraph-scale subiu o default porque 500 e
+    # baixo demais para sistema real (10-50 mil objetos) -- com lote, o custo
+    # de percorrer mais objetos deixou de ser proibitivo. `--max-objects 0`
+    # desliga o cap de vez.
+    assert args.max_objects == 5000 == cli.DEFAULT_MAX_OBJECTS
     assert args.max_depth == 20 == cli.DEFAULT_MAX_DEPTH
 
 

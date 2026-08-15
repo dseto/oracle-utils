@@ -1,0 +1,10 @@
+[
+  {
+    "nodeid": "tests\\test_depgraph_skill.py:305",
+    "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+  },
+  {
+    "nodeid": "tests\\test_plsqlflow_skill.py:276",
+    "reason": "credenciais de dev nao disponiveis nesta sessao (PLSQLFLOW_USER/PLSQLFLOW_PWD/PLSQLFLOW_DSN)"
+  }
+]

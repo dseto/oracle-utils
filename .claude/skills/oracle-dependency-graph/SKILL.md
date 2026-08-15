@@ -206,6 +206,100 @@ comparar o `chain_hash` atual contra uma nova extração é o único jeito
 confiável de saber se ele ficou desatualizado — não há heurística de idade
 de arquivo.
 
+## Sistemas gigantes (10 a 50 mil objetos)
+
+O caso real que motivou este contrato não é `GESTAO.FLOW_DEMO` (3 objetos):
+é um subsistema inteiro. Três mudanças tornam isso viável.
+
+### 1. Extração em lote — por que o grafo grande agora *gera*
+
+Antes, cada objeto novo descoberto pela BFS custava uma ida ao banco
+(`deps_direct`, um `SELECT` por objeto) — 20 mil objetos, 20 mil
+round-trips, e a latência de rede domina o tempo total. Agora a BFS drena
+a fila **um nível inteiro por vez**: agrupa os objetos pendentes por
+`owner`, fatia em lotes (`extract.BATCH_CHUNK_SIZE` nomes por vez) e faz
+uma única chamada `deps_direct_batch` por owner/lote em vez de uma por
+objeto — round-trips caem de O(nós) para O(níveis × owners × lotes). O
+mesmo vale para o enriquecimento (`statements`/`source` por owner em vez
+de por objeto). Nada disso muda o grafo resultante nem o comando — é
+transparente:
+
+```
+python -m plsqlflow depgraph GESTAO.PKG_GRANDE --conn dev --max-objects 0
+```
+
+### 2. `--index-split` — como ler o `INDEX.md` de um grafo grande
+
+Acima de `--index-split` nós (default `1000`), `INDEX.md` deixa de listar
+o fechamento transitivo inteiro (ninguém — nem o assistente — consegue
+consumir uma lista de milhares de linhas) e vira um **sumário**:
+estatísticas, `## PONTOS CEGOS` (completo, nunca truncado — é a garantia
+de honestidade) e uma seção `## Hubs` com os 20 objetos de maior grau
+(entrada + saída), o ponto de partida natural para entender um subsistema
+desconhecido. O fechamento transitivo completo é particionado por schema
+em `INDEX-<OWNER>.md` (um arquivo por owner que aparece no grafo).
+
+Ordem de leitura recomendada para um grafo sumarizado:
+1. `INDEX.md` — estatísticas + `## Hubs` (quem concentra as dependências)
+   + `## PONTOS CEGOS` (honestidade antes de qualquer afirmação).
+2. `INDEX-<OWNER>.md` do(s) schema(s) relevante(s) para a pergunta —
+   fechamento completo daquele owner, não do grafo inteiro.
+3. `nodes/<OWNER>.<OBJETO>.md` do objeto específico, como sempre.
+
+Abaixo do limiar, o formato de `INDEX.md` não muda em nada — é o mesmo
+`INDEX.md` plano de sempre. Ajustar o limiar (grafo pequeno que já merece
+sumário, ou grande que ainda cabe numa lista só):
+
+```
+python -m plsqlflow depgraph GESTAO.PKG_GRANDE --conn dev --index-split 300
+```
+
+### 3. Multi-raiz — grafo único de subsistema
+
+`depgraph` aceita mais de uma raiz — todas alimentam a **mesma** BFS e
+saem num grafo único (um objeto alcançado por duas raízes vira um nó só,
+não dois). Com mais de uma raiz, `--name` é **obrigatório** (a saída vai
+para `<output>/<name>/` em vez de `<output>/<OWNER>.<OBJETO>/`):
+
+```
+python -m plsqlflow depgraph GESTAO.PKG_A GESTAO.PKG_B --conn dev --name modulo-financeiro
+```
+
+Com uma raiz só, `--name` continua opcional (comportamento de sempre sem
+ele: saída em `<output>/<OWNER>.<OBJETO>/`); se informado, também rotula a
+saída. `meta.json` registra todas as raízes em `params.roots` (lista), além
+de `params.root_ref` (as mesmas raízes, separadas por vírgula, usado no
+cabeçalho do `INDEX.md`).
+
+### 4. `--max-objects` ampliado ou desligado
+
+O cap de segurança default subiu de 500 para **5000** — o valor antigo
+truncava sistemas reais no meio do fechamento transitivo com muita
+frequência. `--max-objects 0` **desliga o cap de quantidade por completo**
+(nenhum truncamento por número de objetos); o aviso por `--max-depth`
+continua valendo normalmente — os dois caps são independentes. Combinar
+com multi-raiz é o caso de uso central desta seção:
+
+```
+python -m plsqlflow depgraph GESTAO.PKG_A GESTAO.PKG_B GESTAO.PKG_C --conn dev --name modulo-financeiro --max-objects 0
+```
+
+Sem cap de quantidade, quem ainda limita o tamanho do grafo é
+`--max-depth` (default `20`) e a fronteira de `--stop-schemas` — vale
+revisar os dois antes de rodar contra um subsistema sem noção prévia do
+tamanho do fechamento transitivo.
+
+### 5. `oracle-graph/` fora do git
+
+`oracle-graph/` já está no `.gitignore` do repositório — é cache derivado
+do banco (regenerável a qualquer momento, ver "Quando regenerar" acima),
+não é fonte. Em sistemas gigantes isso importa ainda mais: o volume de
+`nodes/*.md` e `edges.jsonl` de um subsistema de milhares de objetos não
+tem lugar num commit. Se precisar compartilhar um grafo específico com
+outra pessoa/sessão, copie o diretório `oracle-graph/<RAIZ_OU_NOME>/`
+manualmente para fora do controle de versão — nunca force-adicione com
+`git add -f`.
+
 ## Fallback sem Python/`oracledb`
 
 Mesmo padrão das demais skills do repositório: se o MCP do SQLcl e o

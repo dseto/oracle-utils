@@ -33,6 +33,18 @@ Fases (ver docs/plano-oracle-dependency-graph.md, secao 3):
   alem do texto literal da fase 4 -- ver decisao registrada em
   `add_trigger_phase`), necessaria para a secao `## Colunas` do node .md
   que `depgraph_render.py` grava.
+
+Numeracao de tarefa acima e do contrato `plsqlflow-py` (docs/plano-oracle-
+dependency-graph.md), ja concluido -- nao confundir com o contrato
+`depgraph-scale` (.harness/work/depgraph-scale/), cuja T-01 reusa o mesmo
+motor `_DepGraphEngine`: `_DepGraphEngine.run()` passou a resolver a BFS
+NIVEL a nivel (`_run_level_batch`/`_process_object`), agrupando
+`deps_direct_batch` por owner/chunk em vez de uma `deps_direct` por
+objeto, sem mudar nenhum campo de `DepGraphResult` -- ver docstring de
+`run()` para o design e `tests/test_depgraph_bfs_batch.py` para a prova
+de equivalencia. A T-05 do mesmo contrato acrescenta multiplas raizes
+(`build_dep_graph(..., roots=[...])`, ver docstring da funcao) sem tocar
+nada disto -- so semeia a mesma fila com mais de um item em depth=0.
 """
 from __future__ import annotations
 
@@ -41,12 +53,14 @@ from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union
 
 from .extract import (
+    DepsDirectBatchRow,
     DepsDirectRow,
     ObjectCatalogRow,
     PlscopeCheckRow,
     SynonymRow,
     TabColumnRow,
     TriggerRow,
+    chunk_names,
 )
 from .resolve import resolve_synonym_chain
 
@@ -190,9 +204,27 @@ class DepExtractor(Protocol):
     consumido pelo CLI existente do modo flow); `tab_columns(owner,
     table_names)` espelha `extract.fetch_tab_columns` e alimenta
     `DepNode.columns` para a secao `## Colunas` do node .md.
+
+    `deps_direct_batch(owner, object_list)` (T-01, OPCIONAL -- unico
+    metodo deste Protocol que nao e obrigatorio): espelha
+    `extract.fetch_deps_direct_batch` -- `object_list` e uma string
+    "A,B,C" pronta para o bind `:object_list` (ver `extract.chunk_names`),
+    e `DepsDirectBatchRow.name` identifica de qual objeto de ORIGEM cada
+    linha devolvida veio (varios objetos por chamada). O Protocol
+    estrutural do Python nao tem "metodo opcional" de primeira classe --
+    a opcionalidade aqui e so convencao documentada: `_DepGraphEngine.run`
+    detecta a presenca do metodo via `hasattr` em runtime e, quando
+    ausente, processa o nivel inteiro pelo caminho por-objeto
+    (`deps_direct`) -- e o que acontece com os fakes de
+    tests/test_depgraph_bfs.py e tests/test_depgraph_triggers.py, que nao
+    implementam `deps_direct_batch` e continuam funcionando sem alteracao.
     """
 
     def deps_direct(self, owner: str, name: str) -> List[DepsDirectRow]: ...
+
+    def deps_direct_batch(
+        self, owner: str, object_list: Optional[str]
+    ) -> List[DepsDirectBatchRow]: ...
 
     def object_catalog(
         self, owner: str, object_list: Optional[str] = None
@@ -448,117 +480,227 @@ class _DepGraphEngine:
             node.note = marker if node.note is None else "{}; {}".format(node.note, marker)
 
     def run(self) -> None:
-        """Processa a fila ate esvaziar -- mesmo laco de `build_dep_graph`
-        (T-02), extraido para metodo reusavel. `add_trigger_phase` (T-04)
-        semeia a fila via `expand_triggers` e chama este metodo de novo
-        para expandir os triggers re-injetados (e qualquer dependencia
-        nova que eles tragam)."""
+        """Processa a fila NIVEL a nivel (T-01), nao mais objeto a objeto:
+        drena de uma vez todos os itens atualmente na fila (`_run_level*`)
+        antes de deixar `enqueue` acrescentar o proximo nivel. Invariante
+        que sustenta o corte: como `enqueue` so acrescenta itens de
+        profundidade `depth+1` ao FIM da deque, todo item do nivel
+        corrente sempre precede qualquer item do proximo nivel -- drenar
+        exatamente `len(self.queue)` itens no inicio de cada iteracao do
+        laco externo captura o nivel inteiro, nem mais nem menos (mesma
+        BFS por niveis de sempre, so que agora com um ponto de corte
+        explicito para agrupar a busca de dependencias).
+
+        `add_trigger_phase` (T-04) semeia a fila via `expand_triggers` e
+        chama este metodo de novo para expandir os triggers re-injetados
+        (e qualquer dependencia nova que eles tragam) -- continua
+        funcionando sem alteracao, pois so reusa `run()`.
+
+        Caminho em lote vs por-objeto (T-01): quando
+        `self.extractor.deps_direct_batch` existe (checado uma vez por
+        `hasattr`, ver docstring do Protocol `DepExtractor`), o nivel
+        inteiro e resolvido por `_run_level_batch` (uma chamada
+        `deps_direct_batch` por owner/chunk). Quando ausente -- os fakes
+        de tests/test_depgraph_bfs.py e tests/test_depgraph_triggers.py,
+        por exemplo --, cada item do nivel e processado na ORDEM ORIGINAL
+        da fila (FIFO) via `_process_object`, byte a byte a mesma sequencia
+        que o laco antigo produzia (a extracao para `_process_object` nao
+        mudou nenhuma linha de logica, so moveu de lugar)."""
+        use_batch = hasattr(self.extractor, "deps_direct_batch")
         while self.queue:
-            cur_owner, cur_name, depth, fallback_type = self.queue.popleft()
-            key = (cur_owner.upper(), cur_name.upper())
-            ref = "{}.{}".format(key[0], key[1])
+            level_items = [self.queue.popleft() for _ in range(len(self.queue))]
+            if use_batch:
+                self._run_level_batch(level_items)
+            else:
+                for cur_owner, cur_name, depth, fallback_type in level_items:
+                    self._process_object(cur_owner, cur_name, depth, fallback_type, self.extractor.deps_direct)
 
+    def _run_level_batch(self, level_items: List[Tuple[str, str, int, Optional[str]]]) -> None:
+        """Resolve um nivel inteiro com UMA chamada `deps_direct_batch` por
+        owner/chunk de `extract.BATCH_CHUNK_SIZE` nomes, em vez de uma
+        `deps_direct` por objeto (T-01).
+
+        Fronteira primeiro, sempre: objeto em `stop_schemas` ou com
+        prefixo `DBMS_`/`UTL_` nunca entra no `object_list` do pedido em
+        lote -- mesma regra que `_process_object` aplicaria objeto a
+        objeto, so que aplicada ANTES de montar o pedido (senao a
+        fronteira seria "reconsultada" via lote, quebrando a garantia
+        documentada em `build_dep_graph`). Objeto ja presente em
+        `self.nodes` tambem fica fora (visited-set ja impede reenfileirar,
+        isto e so a mesma checagem defensiva de `_process_object`).
+
+        Ordem de PROCESSAMENTO = ordem de `level_items` (T-02, corrige a
+        divergencia deixada pendente pelo T-01): este metodo tinha um bug
+        sutil aqui -- ordenava `level_items` por `(owner, name)` antes de
+        chamar `_process_object`, enquanto o caminho por-objeto de `run()`
+        processa a mesma fila em ordem FIFO (ordem de enfileiramento). Sem
+        truncamento os dois convergem porque `to_result()` reordena tudo
+        no final; mas `_process_object` decide o corte de `max_objects`
+        checando `len(self.nodes) >= self.max_objects` NO MOMENTO em que
+        cada objeto e processado -- e esse momento (quem ja virou no antes
+        de quem) depende da ORDEM DE PROCESSAMENTO, nao da ordem final. Com
+        `level_items` ordenado por nome, o objeto que "ganha" a vaga antes
+        do corte e diferente do objeto que ganharia em ordem FIFO -> mesmo
+        `max_objects`, `not_expanded` diferente entre os dois caminhos (e,
+        em cascata, diferenca tambem no corte por `max_depth`, pois um
+        `not_expanded` diferente muda quais filhos sao enfileirados para o
+        proximo nivel). A correcao: NAO reordenar para processar -- so
+        agrupar por owner (ordem interna do agrupamento nao importa, e so
+        para montar o dicionario `deps_by_key` usado como cache de
+        consulta) e depois iterar `level_items` na ordem ORIGINAL para
+        chamar `_process_object`, replicando byte a byte a mesma sequencia
+        que o caminho por-objeto usaria se este extractor nao tivesse
+        `deps_direct_batch`. A ordem dos PEDIDOS `deps_direct_batch` em si
+        (por owner, `sorted(pending_names_by_owner)`) continua deterministica
+        mas e irrelevante para o resultado -- so afeta a ordem de chamadas
+        ao extractor, nunca o conteudo do grafo, ja que `chunk_names` ja
+        ordena/dedupica os nomes dentro de cada chunk."""
+        pending_names_by_owner: Dict[str, Set[str]] = {}
+        for owner, name, _depth, _fallback_type in level_items:
+            key = (owner.upper(), name.upper())
             if key in self.nodes:
-                # Defensivo: o visited-set em enqueue() ja evita duplicata,
-                # mas a BFS nunca deve recriar/reprocessar um no existente.
                 continue
-
-            if len(self.nodes) >= self.max_objects:
-                self.note_truncation("limite de max_objects={} atingido".format(self.max_objects))
-                self.not_expanded.append(ref)
-                continue
-
             is_frontier = key[0] in self.stop_schemas_u or key[1].startswith(("DBMS_", "UTL_"))
-
             if is_frontier:
-                # Fronteira: entra como folha, mas nunca reconsultamos o
-                # dicionario do schema de sistema (deps_direct/
-                # object_catalog/plscope_check jamais sao chamados aqui).
-                node = DepNode(
-                    owner=key[0],
-                    object_name=key[1],
-                    object_type=fallback_type or "UNKNOWN",
-                    status="UNKNOWN",
-                    plscope=False,
-                    is_leaf=True,
-                )
-                self._annotate_trigger(key, node)
-                self.nodes[key] = node
                 continue
+            pending_names_by_owner.setdefault(key[0], set()).add(key[1])
 
-            object_type, status, last_ddl_time = self.classify(cur_owner, cur_name, fallback_type)
-            plscope = self.has_plscope(cur_owner, cur_name, object_type)
+        deps_by_key: Dict[Tuple[str, str], List[DepsDirectBatchRow]] = {}
+        for owner in sorted(pending_names_by_owner):
+            for chunk in chunk_names(pending_names_by_owner[owner]):
+                for row in self.extractor.deps_direct_batch(owner, chunk):
+                    deps_by_key.setdefault((owner, row.name.upper()), []).append(row)
+
+        def fetch_deps(owner: str, name: str) -> List[DepsDirectBatchRow]:
+            return deps_by_key.get((owner.upper(), name.upper()), [])
+
+        for owner, name, depth, fallback_type in level_items:
+            self._process_object(owner, name, depth, fallback_type, fetch_deps)
+
+    def _process_object(
+        self,
+        cur_owner: str,
+        cur_name: str,
+        depth: int,
+        fallback_type: Optional[str],
+        fetch_deps,
+    ) -> None:
+        """Corpo do processamento de UM objeto desenfileirado -- extraido
+        do antigo laco de `run()` (T-01) para ser compartilhado pelos dois
+        caminhos (por-objeto e em lote). `fetch_deps(owner, name)` e o
+        UNICO ponto de variacao entre os dois: no caminho por-objeto e
+        `self.extractor.deps_direct` (chamado direto por objeto); no
+        caminho em lote e uma funcao que consulta um dicionario ja
+        povoado por `_run_level_batch` (uma unica leva de chamadas para o
+        nivel inteiro). Todo o resto -- cap de max_objects, fronteira,
+        classificacao, PL/Scope, self-loop, dedup de aresta, sinonimo --
+        e byte a byte o mesmo codigo de antes desta tarefa. Sinonimo
+        continua estritamente por-objeto (so dispara quando o objeto nao
+        tem NENHUMA dependencia, caso raro que nao compensa lotear)."""
+        key = (cur_owner.upper(), cur_name.upper())
+        ref = "{}.{}".format(key[0], key[1])
+
+        if key in self.nodes:
+            # Defensivo: o visited-set em enqueue() ja evita duplicata,
+            # mas a BFS nunca deve recriar/reprocessar um no existente.
+            return
+
+        if len(self.nodes) >= self.max_objects:
+            self.note_truncation("limite de max_objects={} atingido".format(self.max_objects))
+            self.not_expanded.append(ref)
+            return
+
+        is_frontier = key[0] in self.stop_schemas_u or key[1].startswith(("DBMS_", "UTL_"))
+
+        if is_frontier:
+            # Fronteira: entra como folha, mas nunca reconsultamos o
+            # dicionario do schema de sistema (deps_direct/
+            # object_catalog/plscope_check jamais sao chamados aqui).
             node = DepNode(
                 owner=key[0],
                 object_name=key[1],
-                object_type=object_type,
-                status=status,
-                plscope=plscope,
-                is_leaf=False,
-                last_ddl_time=last_ddl_time,
+                object_type=fallback_type or "UNKNOWN",
+                status="UNKNOWN",
+                plscope=False,
+                is_leaf=True,
             )
             self._annotate_trigger(key, node)
             self.nodes[key] = node
+            return
 
-            if object_type in PLSQL_OBJECT_TYPES and not plscope:
-                self.needs_recompile.append(ref)
+        object_type, status, last_ddl_time = self.classify(cur_owner, cur_name, fallback_type)
+        plscope = self.has_plscope(cur_owner, cur_name, object_type)
+        node = DepNode(
+            owner=key[0],
+            object_name=key[1],
+            object_type=object_type,
+            status=status,
+            plscope=plscope,
+            is_leaf=False,
+            last_ddl_time=last_ddl_time,
+        )
+        self._annotate_trigger(key, node)
+        self.nodes[key] = node
 
-            if depth >= self.max_depth:
-                self.note_truncation("limite de max_depth={} atingido em {}".format(self.max_depth, ref))
-                self.not_expanded.append(ref)
-                continue
+        if object_type in PLSQL_OBJECT_TYPES and not plscope:
+            self.needs_recompile.append(ref)
 
-            dep_rows = list(self.extractor.deps_direct(cur_owner, cur_name))
-            dep_rows.sort(key=lambda r: (r.referenced_owner.upper(), r.referenced_name.upper()))
+        if depth >= self.max_depth:
+            self.note_truncation("limite de max_depth={} atingido em {}".format(self.max_depth, ref))
+            self.not_expanded.append(ref)
+            return
 
-            outbound_count = 0
-            for row in dep_rows:
-                ref_owner_u, ref_name_u = row.referenced_owner.upper(), row.referenced_name.upper()
-                if (ref_owner_u, ref_name_u) == key:
-                    continue  # self-loop: BODY dependendo da propria SPEC (ou vice-versa)
-                to_ref = "{}.{}".format(ref_owner_u, ref_name_u)
-                if self.add_edge(ref, to_ref, "CALL", confidence="exact"):
-                    outbound_count += 1
-                self.enqueue(row.referenced_owner, row.referenced_name, depth + 1, row.referenced_type)
+        dep_rows = list(fetch_deps(cur_owner, cur_name))
+        dep_rows.sort(key=lambda r: (r.referenced_owner.upper(), r.referenced_name.upper()))
 
-            if not dep_rows:
-                syn_rows = self.extractor.synonym(cur_owner, cur_name)
-                if syn_rows:
-                    chain = resolve_synonym_chain(
-                        lambda o, n: self.extractor.synonym(o, n), cur_owner, cur_name
-                    )
-                    prev_ref = ref
-                    for hop in chain:
-                        if hop.db_link:
-                            link_owner = (hop.base_owner or "REMOTE").upper()
-                            link_name = (hop.base_name or key[1]).upper()
-                            link_ref = "{}.{}@{}".format(link_owner, link_name, hop.db_link)
-                            link_key = ("__DBLINK__", link_ref)
-                            if link_key not in self.nodes:
-                                self.nodes[link_key] = DepNode(
-                                    owner=link_owner,
-                                    object_name=link_name,
-                                    object_type="DATABASE LINK",
-                                    status="UNKNOWN",
-                                    plscope=False,
-                                    is_leaf=True,
-                                    note="db_link:{}".format(hop.db_link),
-                                )
-                            if self.add_edge(prev_ref, link_ref, "SYNONYM_RESOLVES_TO"):
-                                outbound_count += 1
-                            prev_ref = link_ref
-                            break
-                        if hop.base_owner and hop.base_name:
-                            base_ref = "{}.{}".format(hop.base_owner.upper(), hop.base_name.upper())
-                            if self.add_edge(prev_ref, base_ref, "SYNONYM_RESOLVES_TO"):
-                                outbound_count += 1
-                            self.enqueue(hop.base_owner, hop.base_name, depth + 1, None)
-                            prev_ref = base_ref
-                        else:
-                            break
+        outbound_count = 0
+        for row in dep_rows:
+            ref_owner_u, ref_name_u = row.referenced_owner.upper(), row.referenced_name.upper()
+            if (ref_owner_u, ref_name_u) == key:
+                continue  # self-loop: BODY dependendo da propria SPEC (ou vice-versa)
+            to_ref = "{}.{}".format(ref_owner_u, ref_name_u)
+            if self.add_edge(ref, to_ref, "CALL", confidence="exact"):
+                outbound_count += 1
+            self.enqueue(row.referenced_owner, row.referenced_name, depth + 1, row.referenced_type)
 
-            if outbound_count == 0:
-                node.is_leaf = True
+        if not dep_rows:
+            syn_rows = self.extractor.synonym(cur_owner, cur_name)
+            if syn_rows:
+                chain = resolve_synonym_chain(
+                    lambda o, n: self.extractor.synonym(o, n), cur_owner, cur_name
+                )
+                prev_ref = ref
+                for hop in chain:
+                    if hop.db_link:
+                        link_owner = (hop.base_owner or "REMOTE").upper()
+                        link_name = (hop.base_name or key[1]).upper()
+                        link_ref = "{}.{}@{}".format(link_owner, link_name, hop.db_link)
+                        link_key = ("__DBLINK__", link_ref)
+                        if link_key not in self.nodes:
+                            self.nodes[link_key] = DepNode(
+                                owner=link_owner,
+                                object_name=link_name,
+                                object_type="DATABASE LINK",
+                                status="UNKNOWN",
+                                plscope=False,
+                                is_leaf=True,
+                                note="db_link:{}".format(hop.db_link),
+                            )
+                        if self.add_edge(prev_ref, link_ref, "SYNONYM_RESOLVES_TO"):
+                            outbound_count += 1
+                        prev_ref = link_ref
+                        break
+                    if hop.base_owner and hop.base_name:
+                        base_ref = "{}.{}".format(hop.base_owner.upper(), hop.base_name.upper())
+                        if self.add_edge(prev_ref, base_ref, "SYNONYM_RESOLVES_TO"):
+                            outbound_count += 1
+                        self.enqueue(hop.base_owner, hop.base_name, depth + 1, None)
+                        prev_ref = base_ref
+                    else:
+                        break
+
+        if outbound_count == 0:
+            node.is_leaf = True
 
     def expand_triggers(self) -> None:
         """Fase 4 (T-04, plano secao 4.4): para cada tabela que recebeu
@@ -687,9 +829,27 @@ def build_dep_graph(
     stop_schemas: Sequence[str] = ("SYS", "SYSTEM"),
     max_objects: int = 500,
     max_depth: int = 20,
+    roots: Optional[Sequence[RootLike]] = None,
 ) -> DepGraphResult:
     """Busca em largura sobre `ALL_DEPENDENCIES` (via `extractor.deps_direct`)
     a partir de `root`, visitando cada objeto uma unica vez.
+
+    `roots` (T-05, contrato oracle-depgraph-scale): raizes ADICIONAIS que
+    semeiam a MESMA BFS -- mesmo motor, mesmo visited-set, todas no nivel 0
+    (`depth=0`). Um objeto alcancado a partir de duas raizes vira UM SO no
+    (o visited-set de `enqueue` ja garante isso, sem mudanca de logica) com
+    as arestas dos dois caminhos preservadas. Decisao de design registrada
+    aqui: um parametro ADITIVO (`roots`, plural, opcional, default `None`)
+    em vez de aceitar `root: Union[RootLike, Sequence[RootLike]]` no MESMO
+    parametro -- `RootLike` ja inclui uma tupla `(owner, object_name)` de 2
+    elementos, entao uma sequencia de raizes tambem seria representavel
+    como tupla/lista, e o codigo teria que adivinhar se `("GESTAO", "PKG_A")`
+    e UMA raiz ou (erroneamente) uma sequencia de 2 raizes de 1 caractere.
+    Um parametro dedicado remove essa ambiguidade de vez e preserva 100% de
+    compatibilidade com todo chamador existente (`root` continua obrigatorio
+    e na mesma posicao; `roots=None` e o default, entao nenhuma chamada
+    antiga muda de comportamento). Mesma escolha em
+    `plsqlflow/cli.py::_build_depgraph_result` (`extra_roots`).
 
     Regras (plano, secao 4.4; spec T-02):
     - visited-set chaveado por `(OWNER, NAME)` em maiusculas -- agrega
@@ -723,6 +883,13 @@ def build_dep_graph(
     owner0, name0 = _normalize_root(root)
     engine = _DepGraphEngine(extractor, stop_schemas, max_objects, max_depth)
     engine.enqueue(owner0, name0, 0, None)
+    # T-05: raizes extras semeiam a MESMA fila/visited-set, todas em
+    # depth=0 -- se uma delas ja foi enfileirada por `root` (ou por outra
+    # raiz anterior desta mesma lista), `enqueue` no-opa (visited-set),
+    # entao raizes repetidas/sobrepostas nunca duplicam no nem reprocessam.
+    for extra_root in roots or ():
+        extra_owner, extra_name = _normalize_root(extra_root)
+        engine.enqueue(extra_owner, extra_name, 0, None)
     engine.run()
     return engine.to_result()
 

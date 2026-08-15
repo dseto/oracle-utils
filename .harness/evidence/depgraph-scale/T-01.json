@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-01",
+  "contract": "depgraph-scale",
+  "desc": "Percorrer as dependências consulta o banco uma vez por nível da busca em vez de uma vez por objeto, sem mudar o grafo resultante",
+  "files": [
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_bfs_batch.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_bfs_batch.py tests/test_depgraph_bfs.py tests/test_depgraph_triggers.py -q",
+  "recorded_at": "2026-08-15T21:18:50.528361+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:557b9a5c0ec218eff146f66bbbfc12b85523c07262490724748a877a3b72408d"
+}
