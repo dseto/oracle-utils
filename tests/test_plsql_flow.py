@@ -1,11 +1,17 @@
-"""Testes do contrato plsql-flow (T-01..T-05).
+"""Testes do contrato plsql-flow (T-01..T-04).
 
 Grupos por -k:
   queries      -> T-01 biblioteca sql/flow/
   skill_doc    -> T-02 SKILL.md da skill
   fixture      -> T-03 script da fixture FLOW_DEMO
   hprof        -> T-04 modo dinamico DBMS_HPROF
-  e2e_evidence -> T-05 evidencia da validacao end-to-end
+
+A evidencia e2e de T-05 vivia em .harness/scratch/plsql-flow-evidence.md,
+que o `harness finish` varre ao encerrar qualquer contrato; os testes que
+dependiam dela foram removidos. O comportamento validado (mermaid com
+recursao, trigger, SQL dinamico e overload do FLOW_DEMO) e coberto de forma
+permanente por tests/test_plsqlflow_golden.py (fixtures commitadas) e pela
+convencao da skill em tests/test_plsqlflow_skill.py.
 """
 import re
 from pathlib import Path
@@ -14,7 +20,6 @@ REPO = Path(__file__).resolve().parent.parent
 FLOW_DIR = REPO / "sql" / "flow"
 SKILL = REPO / ".claude" / "skills" / "plsql-flow" / "SKILL.md"
 FIXTURE = FLOW_DIR / "fixture_flow_demo.sql"
-EVIDENCE = REPO / ".harness" / "scratch" / "plsql-flow-evidence.md"
 
 BIND_PATTERN = re.compile(r"--.*[Bb]inds?\s*:")
 
@@ -190,24 +195,3 @@ def test_hprof_skill_warns_side_effects():
     text = read(SKILL).lower()
     assert "efeito" in text, "SKILL.md sem aviso de efeitos do modo dinamico"
     assert "colatera" in text, "SKILL.md sem aviso de efeitos colaterais do modo dinamico"
-
-
-# ---------------------------------------------------------- T-05 e2e_evidence
-
-def test_e2e_evidence_exists():
-    assert EVIDENCE.exists(), "evidencia .harness/scratch/plsql-flow-evidence.md ausente"
-
-
-def test_e2e_evidence_content():
-    text = read(EVIDENCE)
-    lower = text.lower()
-    checks = {
-        "bloco mermaid": "```mermaid" in text,
-        "ciclo de recursao marcado": "recursao" in lower,
-        "trigger no grafo": "trg_flow_demo" in lower,
-        "no de SQL dinamico irresoluvel": "dinamico" in lower,
-        "overload resolvido": "overload" in lower,
-        "package alvo": "flow_demo" in lower,
-    }
-    missing = [k for k, ok in checks.items() if not ok]
-    assert not missing, f"evidencia incompleta: {missing}"

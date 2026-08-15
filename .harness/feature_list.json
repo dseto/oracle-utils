@@ -1,94 +1,23 @@
 {
-  "contract": "plsqlflow-py",
-  "compiled_at": "2026-08-15T12:40:45.800238+00:00",
+  "contract": "fix-plsql-flow-evidence-test",
+  "compiled_at": "2026-08-15T19:40:21.756851+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
       "3 falhas consecutivas do mesmo verify_cmd sem progresso",
-      "python-oracledb nao conecta no dev (localhost:1521/XEPDB1) apos 2 tentativas de diagnostico",
-      "fixture FLOW_DEMO ausente/invalida no dev e recriacao exigiria DDL nao autorizado",
-      "qualquer necessidade de DML/DDL no banco alem da ja autorizada (fixture FLOW_DEMO existente)"
+      "remover os 2 testes fizer o total de passed cair abaixo do valor atual (86), sinal de regressao de cobertura nao prevista"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura",
+      "desc": "Testes de tests/test_plsql_flow.py nao dependem mais de arquivo efemero em .harness/scratch/ e a suite completa fecha 100% verde",
       "files": [
-        "plsqlflow/__init__.py",
-        "plsqlflow/db.py",
-        "plsqlflow/queries.py",
-        "plsqlflow/extract.py",
-        "tests/test_plsqlflow_unit.py",
-        "tests/conftest.py"
+        "tests/test_plsql_flow.py"
       ],
-      "verify_cmd": "pytest tests/test_plsqlflow_unit.py -q",
+      "verify_cmd": "pytest -q -rs",
       "depends": [],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-02",
-      "desc": "Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos",
-      "files": [
-        "plsqlflow/resolve.py",
-        "plsqlflow/graph.py",
-        "tests/test_plsqlflow_graph.py",
-        "tests/fixtures/flow_demo_extract.json"
-      ],
-      "verify_cmd": "pytest tests/test_plsqlflow_graph.py -q",
-      "depends": [
-        "T-01"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-03",
-      "desc": "SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca",
-      "files": [
-        "plsqlflow/dynsql.py",
-        "plsqlflow/lexical.py",
-        "tests/test_plsqlflow_lexical.py"
-      ],
-      "verify_cmd": "pytest tests/test_plsqlflow_lexical.py -q",
-      "depends": [
-        "T-01"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-04",
-      "desc": "Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file",
-      "files": [
-        "plsqlflow/mermaid.py",
-        "plsqlflow/report.py",
-        "plsqlflow/cli.py",
-        "plsqlflow/__main__.py",
-        "tests/test_plsqlflow_golden.py",
-        "tests/fixtures/flow_demo_golden.mmd"
-      ],
-      "verify_cmd": "pytest tests/test_plsqlflow_golden.py -q",
-      "depends": [
-        "T-02",
-        "T-03"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-05",
-      "desc": "Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev",
-      "files": [
-        ".claude/skills/plsql-flow/SKILL.md",
-        "tests/test_plsqlflow_skill.py"
-      ],
-      "verify_cmd": "pytest tests/test_plsqlflow_skill.py -q -rs",
-      "depends": [
-        "T-04"
-      ],
       "cwd": null,
       "passes": true
     }

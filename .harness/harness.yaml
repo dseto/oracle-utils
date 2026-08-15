@@ -1,0 +1,13 @@
+﻿governance:
+  approval_policy: auto
+  budget:
+    max_tokens_per_task: 500000      # orientacao (advisory), nao enforcement
+    max_tool_calls_per_task: 120
+
+  # extra_allowed_commands:
+  #   - <binario> <subcomando>
+
+verification:
+  enforce_tdd: false
+  test_command: "pytest -q"
+  test_glob: "tests/**/*.py"
