@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `plsqlflow-py`
+Contrato: `fix-plsql-flow-evidence-test`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,11 +8,7 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura | done |
-| T-02 | Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos | done |
-| T-03 | SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca | done |
-| T-04 | Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file | done |
-| T-05 | Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev | done |
+| T-01 | Testes de tests/test_plsql_flow.py nao dependem mais de arquivo efemero em .harness/scratch/ e a suite completa fecha 100% verde | done |
 
 ## Última atualização
 
