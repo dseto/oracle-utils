@@ -1,0 +1,17 @@
+{
+  "feature_id": "T-04",
+  "contract": "plsqlflow-py",
+  "desc": "Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file",
+  "files": [
+    "plsqlflow/mermaid.py",
+    "plsqlflow/report.py",
+    "plsqlflow/cli.py",
+    "plsqlflow/__main__.py",
+    "tests/test_plsqlflow_golden.py",
+    "tests/fixtures/flow_demo_golden.mmd"
+  ],
+  "verify_cmd": "pytest tests/test_plsqlflow_golden.py -q",
+  "recorded_at": "2026-08-15T12:49:30.304260+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:4de1611e2bdf588320b475a0abcdde07f970839fa75cabe281fbd166f5a72420"
+}

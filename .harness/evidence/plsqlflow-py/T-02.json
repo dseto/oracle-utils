@@ -1,0 +1,15 @@
+{
+  "feature_id": "T-02",
+  "contract": "plsqlflow-py",
+  "desc": "Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos",
+  "files": [
+    "plsqlflow/resolve.py",
+    "plsqlflow/graph.py",
+    "tests/test_plsqlflow_graph.py",
+    "tests/fixtures/flow_demo_extract.json"
+  ],
+  "verify_cmd": "pytest tests/test_plsqlflow_graph.py -q",
+  "recorded_at": "2026-08-15T12:20:33.926359+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:7c8d6549198d3505762c87926ce004392650812428e4a9fbd45b09b353fd4147"
+}

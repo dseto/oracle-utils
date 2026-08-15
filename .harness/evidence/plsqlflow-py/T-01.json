@@ -1,0 +1,17 @@
+{
+  "feature_id": "T-01",
+  "contract": "plsqlflow-py",
+  "desc": "Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura",
+  "files": [
+    "plsqlflow/__init__.py",
+    "plsqlflow/db.py",
+    "plsqlflow/queries.py",
+    "plsqlflow/extract.py",
+    "tests/test_plsqlflow_unit.py",
+    "tests/conftest.py"
+  ],
+  "verify_cmd": "pytest tests/test_plsqlflow_unit.py -q",
+  "recorded_at": "2026-08-15T12:40:05.166250+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:c5c3f0548791fb90081c6a2736e4348db7284aeb8e77d066eaea7336184095ed"
+}

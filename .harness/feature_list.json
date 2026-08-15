@@ -1,45 +1,43 @@
 {
-  "contract": "plsql-flow",
-  "compiled_at": "2026-08-15T10:14:12.327764+00:00",
+  "contract": "plsqlflow-py",
+  "compiled_at": "2026-08-15T12:40:45.800238+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
       "3 falhas consecutivas do mesmo verify_cmd sem progresso",
-      "Conexao MCP sqlcl indisponivel ou banco dev fora do ar",
-      "Erro de privilegio (ORA-01031/ORA-00942) que exigir grant novo no dev"
+      "python-oracledb nao conecta no dev (localhost:1521/XEPDB1) apos 2 tentativas de diagnostico",
+      "fixture FLOW_DEMO ausente/invalida no dev e recriacao exigiria DDL nao autorizado",
+      "qualquer necessidade de DML/DDL no banco alem da ja autorizada (fixture FLOW_DEMO existente)"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "DBA consegue consultar toda a base estática do grafo (chamadas, triggers, tipos, sinônimos, overloads) com queries prontas da biblioteca",
+      "desc": "Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura",
       "files": [
-        "sql/flow/resolve_target.sql",
-        "sql/flow/plscope_check.sql",
-        "sql/flow/plscope_calls.sql",
-        "sql/flow/plscope_statements.sql",
-        "sql/flow/fetch_source.sql",
-        "sql/flow/deps_direct.sql",
-        "sql/flow/triggers_for_tables.sql",
-        "sql/flow/fk_cascade.sql",
-        "sql/flow/type_hierarchy.sql",
-        "sql/flow/resolve_synonym.sql",
-        "tests/test_plsql_flow.py"
+        "plsqlflow/__init__.py",
+        "plsqlflow/db.py",
+        "plsqlflow/queries.py",
+        "plsqlflow/extract.py",
+        "tests/test_plsqlflow_unit.py",
+        "tests/conftest.py"
       ],
-      "verify_cmd": "pytest tests/test_plsql_flow.py -q -k queries",
+      "verify_cmd": "pytest tests/test_plsqlflow_unit.py -q",
       "depends": [],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-02",
-      "desc": "Usuário invoca /plsql-flow com procedure+parâmetros e recebe diagrama mermaid do caminho completo, com casos complexos marcados e proteção anti-loop",
+      "desc": "Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos",
       "files": [
-        ".claude/skills/plsql-flow/SKILL.md",
-        "tests/test_plsql_flow.py"
+        "plsqlflow/resolve.py",
+        "plsqlflow/graph.py",
+        "tests/test_plsqlflow_graph.py",
+        "tests/fixtures/flow_demo_extract.json"
       ],
-      "verify_cmd": "pytest tests/test_plsql_flow.py -q -k skill_doc",
+      "verify_cmd": "pytest tests/test_plsqlflow_graph.py -q",
       "depends": [
         "T-01"
       ],
@@ -48,12 +46,13 @@
     },
     {
       "id": "T-03",
-      "desc": "Ambiente dev tem package de demonstração FLOW_DEMO cobrindo recursão mútua, SQL dinâmico, trigger e overload para validar a skill",
+      "desc": "SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca",
       "files": [
-        "sql/flow/fixture_flow_demo.sql",
-        "tests/test_plsql_flow.py"
+        "plsqlflow/dynsql.py",
+        "plsqlflow/lexical.py",
+        "tests/test_plsqlflow_lexical.py"
       ],
-      "verify_cmd": "pytest tests/test_plsql_flow.py -q -k fixture",
+      "verify_cmd": "pytest tests/test_plsqlflow_lexical.py -q",
       "depends": [
         "T-01"
       ],
@@ -62,31 +61,33 @@
     },
     {
       "id": "T-04",
-      "desc": "Usuário pode ativar modo dinâmico (DBMS_HPROF) e ver o caminho realmente executado sobreposto ao grafo estático",
+      "desc": "Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file",
       "files": [
-        "sql/flow/hprof_setup.sql",
-        "sql/flow/hprof_report.sql",
-        ".claude/skills/plsql-flow/SKILL.md",
-        "tests/test_plsql_flow.py"
+        "plsqlflow/mermaid.py",
+        "plsqlflow/report.py",
+        "plsqlflow/cli.py",
+        "plsqlflow/__main__.py",
+        "tests/test_plsqlflow_golden.py",
+        "tests/fixtures/flow_demo_golden.mmd"
       ],
-      "verify_cmd": "pytest tests/test_plsql_flow.py -q -k hprof",
+      "verify_cmd": "pytest tests/test_plsqlflow_golden.py -q",
       "depends": [
-        "T-02"
+        "T-02",
+        "T-03"
       ],
       "cwd": null,
       "passes": true
     },
     {
       "id": "T-05",
-      "desc": "Skill validada de ponta a ponta contra FLOW_DEMO: ciclo detectado sem travar, trigger e SQL dinâmico no diagrama, overload resolvido, evidência gravada",
+      "desc": "Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev",
       "files": [
-        ".harness/scratch/plsql-flow-evidence.md",
-        "tests/test_plsql_flow.py"
+        ".claude/skills/plsql-flow/SKILL.md",
+        "tests/test_plsqlflow_skill.py"
       ],
-      "verify_cmd": "pytest tests/test_plsql_flow.py -q -k e2e_evidence",
+      "verify_cmd": "pytest tests/test_plsqlflow_skill.py -q -rs",
       "depends": [
-        "T-02",
-        "T-03"
+        "T-04"
       ],
       "cwd": null,
       "passes": true

@@ -30,14 +30,15 @@
     "docs": {
       "value": [
         "README.md",
-        "CLAUDE.md"
+        "CLAUDE.md",
+        "AGENTS.md"
       ],
       "evidence": "README.md",
       "confidence": 1.0
     }
   },
   "unknowns": [],
-  "analyzed_at": "2026-08-15T10:11:06.900433+00:00",
+  "analyzed_at": "2026-08-15T11:38:41.886970+00:00",
   "manifest_snapshot": {
     "pyproject.toml": "fbf2de5c4099f0c368710a70aa781d7d037cac599c9c1a0a7c7321725ce225e7"
   }

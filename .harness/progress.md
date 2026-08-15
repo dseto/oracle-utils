@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `plsql-flow`
+Contrato: `plsqlflow-py`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,11 +8,11 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | DBA consegue consultar toda a base estática do grafo (chamadas, triggers, tipos, sinônimos, overloads) com queries prontas da biblioteca | done |
-| T-02 | Usuário invoca /plsql-flow com procedure+parâmetros e recebe diagrama mermaid do caminho completo, com casos complexos marcados e proteção anti-loop | done |
-| T-03 | Ambiente dev tem package de demonstração FLOW_DEMO cobrindo recursão mútua, SQL dinâmico, trigger e overload para validar a skill | done |
-| T-04 | Usuário pode ativar modo dinâmico (DBMS_HPROF) e ver o caminho realmente executado sobreposto ao grafo estático | done |
-| T-05 | Skill validada de ponta a ponta contra FLOW_DEMO: ciclo detectado sem travar, trigger e SQL dinâmico no diagrama, overload resolvido, evidência gravada | done |
+| T-01 | Pacote conecta no Oracle em modo thin e extrai o dicionario de forma tipada e somente-leitura | done |
+| T-02 | Diagrama reflete o caminho real de execucao: recursao marcada sem loop, overload certo, triggers e cascata FK incluidos, subtipos OVERRIDING como candidatos | done |
+| T-03 | SQL dinamico com literais e constantes vira aresta resolvida; montado em variavel vira ponto cego explicito; fallback sem PL/Scope entrega candidatos com nivel de confianca | done |
+| T-04 | Mesmo alvo gera sempre o mesmo diagrama: CLI produz mermaid+JSON e o resultado do FLOW_DEMO bate byte a byte com o golden file | done |
+| T-05 | Skill /plsql-flow passa a usar o script primeiro e reserva o assistente ao residual, com evidencia real contra o banco dev | done |
 
 ## Última atualização
 
