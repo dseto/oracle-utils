@@ -32,6 +32,18 @@ assistente processar no Passo 2. Opções adicionais: `--max-depth N`
 2. Sem `--conn`: variáveis de ambiente diretas `PLSQLFLOW_USER`,
    `PLSQLFLOW_PWD`, `PLSQLFLOW_DSN`.
 
+Em vez de exportar essas variáveis na mão a cada sessão, um arquivo `.env` no
+diretório onde o CLI é invocado (não no pacote) é lido automaticamente —
+variável já definida no ambiente real sempre ganha do arquivo, e `.env` é
+gitignored. Exemplo:
+```
+PLSQLFLOW_USER=gestao
+PLSQLFLOW_PWD=troque-por-sua-senha
+PLSQLFLOW_DSN=localhost:1521/XEPDB1
+```
+Uso: `cd` até o diretório com o `.env` e rodar
+`python -m plsqlflow OWNER.OBJETO --json` normalmente, sem `--conn`.
+
 Identificadores (owner/objeto/subprograma) são validados por regex antes de
 qualquer SQL; o pacote só executa os `SELECT`s embutidos em `sql/flow/*.sql`
 (carregados por `plsqlflow/queries.py` — fonte única, os mesmos arquivos que

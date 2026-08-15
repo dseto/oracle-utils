@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import oracledb
-from dotenv import load_dotenv
-
-load_dotenv()
+from dotenv import find_dotenv, load_dotenv
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "tools" / "flow-connections.json"
 
@@ -89,7 +87,19 @@ def _resolve_from_env(env: Dict[str, str]) -> Optional[ConnectionParams]:
 def resolve_connection_params(
     alias: Optional[str] = None, env: Optional[Dict[str, str]] = None
 ) -> ConnectionParams:
-    env = env if env is not None else os.environ
+    if env is None:
+        # carga lazy: so mexe no processo quando o chamador NAO injetou env
+        # explicito. Chamador que injeta dict (toda a suite hermetica) fica
+        # 100% imune -- nenhum arquivo lido, nenhum os.environ tocado.
+        # usecwd=True busca o .env a partir do diretorio corrente de quem
+        # invocou o CLI, subindo -- nao relativo a este pacote. override=
+        # False: variavel ja definida no ambiente real sempre ganha do
+        # arquivo. Roda antes do dispatch por alias/direto para que
+        # PLSQLFLOW_PWD_<ALIAS> vindo do .env tambem funcione.
+        dotenv_path = find_dotenv(usecwd=True)
+        if dotenv_path:
+            load_dotenv(dotenv_path, override=False)
+        env = os.environ
 
     if alias:
         return _resolve_from_alias(alias, env)
