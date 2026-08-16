@@ -288,7 +288,16 @@ statements idem
 ```
 
 Soma que não fecha é **erro, não aviso** — o grafo não é gravado como válido.
-Número que não bate é a assinatura da omissão silenciosa.
+
+**O que essa soma prova, e o que não prova** (corrigido após a verificação
+independente, que apontou a redação original como forte demais): ela é uma
+checagem de consistência **interna** — todo artefato produzido está contado em
+algum balde. Ela pega classificação perdida, balde esquecido, nó com grão
+desconhecido. Ela **não** pega, por construção, o caso em que o motor deixa de
+enfileirar um nó alcançável: não haveria artefato para contar, e a soma
+fecharia. A garantia anti-omissão externa vem de outro lugar — do fallback da
+seção 4 (elo fraco nunca interrompe a cadeia) e das fixtures dedicadas a ele.
+As duas coisas são necessárias; nenhuma substitui a outra.
 
 Motivos de rebaixamento para grão objeto ou folha, todos declarados por nó:
 

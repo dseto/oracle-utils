@@ -2,6 +2,8 @@
 
 Contrato: `depgraph-granular`
 
+_Demanda ENCERRADA por `harness finish`._
+
 ## Features
 
 | id | desc | status |
@@ -16,17 +18,5 @@ Contrato: `depgraph-granular`
 | T-08 | O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto | done |
 
 ## Última atualização
-
-<!-- harness:auto -->
-- 2026-08-16T00:15:25.125429+00:00 — T-02 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-02.json
-- 2026-08-16T00:15:26.854950+00:00 — T-06 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-06.json
-- 2026-08-16T01:12:52.421386+00:00 — T-01 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-01.json
-- 2026-08-16T01:13:26.172225+00:00 — T-03 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-03.json
-- 2026-08-16T01:13:30.521020+00:00 — T-04 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-04.json
-- 2026-08-16T01:13:34.930772+00:00 — T-05 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-05.json
-- 2026-08-16T01:13:40.349427+00:00 — T-07 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-07.json
-- 2026-08-16T01:39:43.900614+00:00 — T-08 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-08.json
-<!-- /harness:auto -->
-
 
 _(vazio — demanda encerrada; o próximo `compile-session` regenera este arquivo a partir do contrato novo. A prova do que foi entregue está em `.harness/evidence/`.)_

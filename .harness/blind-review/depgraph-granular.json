@@ -1,0 +1,11 @@
+{
+  "contract": "depgraph-granular",
+  "verdicts": [
+    {
+      "verdict": "pass",
+      "evidence": "PASS 8/8 por verificador independente (contexto limpo, proibido de ler spec/progress/commits). Suite 450 passed; as 8 provas declaradas 145 passed. Terminacao: procgraph.py:688-693 e o UNICO ponto de append na fila, confirmado por grep, e marca visited ANTES de enfileirar -- nenhum cap ou timeout participa. Aresta falsa: teste negativo em tests/test_procgraph_access.py prova que MAIN nao herda o write de LOG_MSG. Anti-omissao: cadeia A(fino)-B(sem PLScope)-C(fino) em tests/test_procgraph_fallback.py:307-339 prova que C aparece; sem dep_extractor o gap fica declarado, nunca omitido (:493-514). COBERTURA levanta ANTES de qualquer escrita (procgraph_render.py:744-746) e o teste prova disco vazio. Nao-regressao provada estruturalmente: tests/test_cli_granular.py sabota os dois pontos de entrada do motor novo e o modo objeto termina com exito. Tres fatos conferidos ao vivo contra a conexao dev pelo proprio verificador: o golden de 59 linhas do FLOW_DEMO bate byte a byte com o dicionario, o formato de plscope_settings, e a ordem de coluna em TRG_FLOW_DEMO_LOG (LOG_ID usage_id=6 col=32 precede ACAO usage_id=5 col=40, provando que ordenar por usage_id daria ordem errada). Quatro achados nao-bloqueantes registrados, o principal sendo que a reconciliacao de COBERTURA e checagem de consistencia INTERNA e nao prova de completude externa.",
+      "files_hash": "sha256:97bce54f611e6ffffe18cdeedbf52e86e4d5825618939cfc81be47d3664e2b94",
+      "recorded_at": "2026-08-16T01:48:49.111255+00:00"
+    }
+  ]
+}
