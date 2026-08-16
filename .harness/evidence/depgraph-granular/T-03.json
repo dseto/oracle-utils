@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-03",
+  "contract": "depgraph-granular",
+  "desc": "O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular",
+  "files": [
+    "plsqlflow/procgraph.py",
+    "tests/test_procgraph_bfs.py",
+    "tests/fixtures/procgraph_demo.json"
+  ],
+  "verify_cmd": "pytest tests/test_procgraph_bfs.py -q",
+  "recorded_at": "2026-08-16T00:46:38.122260+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:81927c14ac818fc6b9ef64416f1a6434e0d34fd3868b279c957db6b15d13094f"
+}

@@ -8,7 +8,7 @@ Contrato: `depgraph-granular`
 | --- | --- | --- |
 | T-01 | Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado | done |
 | T-02 | As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma | done |
-| T-03 | O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular | pending |
+| T-03 | O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular | done |
 | T-04 | Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado | pending |
 | T-05 | O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara | pending |
 | T-06 | Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego | done |
@@ -21,6 +21,7 @@ Contrato: `depgraph-granular`
 - 2026-08-16T00:15:16.237751+00:00 — T-01 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-01.json
 - 2026-08-16T00:15:25.125429+00:00 — T-02 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-02.json
 - 2026-08-16T00:15:26.854950+00:00 — T-06 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-06.json
+- 2026-08-16T00:46:38.122260+00:00 — T-03 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-03.json
 <!-- /harness:auto -->
 
 

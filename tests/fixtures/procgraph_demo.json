@@ -1,0 +1,185 @@
+{
+  "_note": "Fixtures offline (T-03, contrato depgraph-granular) para plsqlflow/procgraph.py. Cada entrada de 'objects' e OWNER.OBJECT_NAME -> lista de 'trees' (uma por object_type -- PACKAGE/PACKAGE BODY compartilham nome mas sao arvores separadas, mesma ressalva de plscope_tree_batch.sql). O fake extractor em tests/test_procgraph_bfs.py le direto daqui; nao ha banco envolvido.",
+  "objects": {
+    "GESTAO.FLOW_DEMO": {
+      "_note": "Copia literal da arvore REAL de GESTAO.FLOW_DEMO (tests/fixtures/plscope_tree.json, T-01) -- golden da secao 2 do plano. Usada pelo teste (a): cadeia exata a partir de MAIN, zero aresta falsa; e pelo teste (d): cache por objeto (8 subprogramas/sinteticos, 1 objeto).",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 14, "name": "FLOW_DEMO", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 13, "name": "LOG_MSG", "type": "PROCEDURE", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 3, "usage_context_id": 2, "line": 3, "col": 13, "name": "LOG_MSG", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "2F4AF72FB4E6C1BEAE54E9433EB5C069"},
+            {"usage_id": 4, "usage_context_id": 3, "line": 3, "col": 21, "name": "P_MSG", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 5, "usage_context_id": 4, "line": 3, "col": 30, "name": "VARCHAR2", "type": "CHARACTER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 7, "usage_context_id": 6, "line": 6, "col": 17, "name": "FLOW_DEMO_LOG", "type": "TABLE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 8, "usage_context_id": 6, "line": 6, "col": 45, "name": "P_MSG", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 9, "usage_context_id": 6, "line": 6, "col": 32, "name": "MSG", "type": "COLUMN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 10, "usage_context_id": 1, "line": 9, "col": 13, "name": "PROC_A", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "6F985FFE083A5C6FBBC67D13D7CD0985"},
+            {"usage_id": 11, "usage_context_id": 10, "line": 9, "col": 20, "name": "P_N", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 12, "usage_context_id": 11, "line": 9, "col": 27, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 13, "usage_context_id": 10, "line": 11, "col": 5, "name": "LOG_MSG", "type": "PROCEDURE", "usage": "CALL", "signature": "2F4AF72FB4E6C1BEAE54E9433EB5C069"},
+            {"usage_id": 14, "usage_context_id": 13, "line": 11, "col": 28, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 15, "usage_context_id": 10, "line": 12, "col": 8, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 16, "usage_context_id": 10, "line": 13, "col": 7, "name": "PROC_B", "type": "PROCEDURE", "usage": "CALL", "signature": "6D85FBC21AE16DE66356EFF78E42C489"},
+            {"usage_id": 17, "usage_context_id": 16, "line": 13, "col": 14, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 18, "usage_context_id": 1, "line": 17, "col": 13, "name": "PROC_B", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "6D85FBC21AE16DE66356EFF78E42C489"},
+            {"usage_id": 19, "usage_context_id": 18, "line": 17, "col": 20, "name": "P_N", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 20, "usage_context_id": 19, "line": 17, "col": 27, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 21, "usage_context_id": 18, "line": 19, "col": 8, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 22, "usage_context_id": 18, "line": 20, "col": 7, "name": "PROC_A", "type": "PROCEDURE", "usage": "CALL", "signature": "6F985FFE083A5C6FBBC67D13D7CD0985"},
+            {"usage_id": 23, "usage_context_id": 22, "line": 20, "col": 14, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 24, "usage_context_id": 1, "line": 24, "col": 13, "name": "RUN_DYNAMIC", "type": "PROCEDURE", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 25, "usage_context_id": 24, "line": 24, "col": 13, "name": "RUN_DYNAMIC", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "ECE9682A452342C2C5E397C50AB2B6E4"},
+            {"usage_id": 26, "usage_context_id": 25, "line": 24, "col": 25, "name": "P_TAG", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 27, "usage_context_id": 26, "line": 24, "col": 34, "name": "VARCHAR2", "type": "CHARACTER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 28, "usage_context_id": 25, "line": 25, "col": 5, "name": "V_SQL", "type": "VARIABLE", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 29, "usage_context_id": 28, "line": 25, "col": 11, "name": "VARCHAR2", "type": "CHARACTER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 31, "usage_context_id": 25, "line": 30, "col": 5, "name": "V_SQL", "type": "VARIABLE", "usage": "ASSIGNMENT", "signature": null},
+            {"usage_id": 32, "usage_context_id": 31, "line": 30, "col": 62, "name": "P_TAG", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 34, "usage_context_id": 33, "line": 31, "col": 23, "name": "V_SQL", "type": "VARIABLE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 35, "usage_context_id": 1, "line": 34, "col": 12, "name": "CALC_OVERLOAD", "type": "FUNCTION", "usage": "DEFINITION", "signature": "15AD55988A9AAF970F3ED0B340B6CDA4"},
+            {"usage_id": 36, "usage_context_id": 35, "line": 34, "col": 26, "name": "P_VAL", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 37, "usage_context_id": 36, "line": 34, "col": 35, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 38, "usage_context_id": 35, "line": 34, "col": 50, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 39, "usage_context_id": 35, "line": 36, "col": 12, "name": "P_VAL", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 40, "usage_context_id": 1, "line": 39, "col": 12, "name": "CALC_OVERLOAD", "type": "FUNCTION", "usage": "DEFINITION", "signature": "BC715965CB1F2CBD7DE6AC9AAA7608DD"},
+            {"usage_id": 41, "usage_context_id": 40, "line": 39, "col": 26, "name": "P_VAL", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 42, "usage_context_id": 41, "line": 39, "col": 35, "name": "VARCHAR2", "type": "CHARACTER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 43, "usage_context_id": 40, "line": 39, "col": 52, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 44, "usage_context_id": 40, "line": 41, "col": 12, "name": "LENGTH", "type": "FUNCTION", "usage": "CALL", "signature": "6AA7292AD9C470D3719AD4B4F8CBE0AD"},
+            {"usage_id": 45, "usage_context_id": 44, "line": 41, "col": 19, "name": "P_VAL", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 46, "usage_context_id": 1, "line": 44, "col": 13, "name": "MAIN", "type": "PROCEDURE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 47, "usage_context_id": 46, "line": 44, "col": 18, "name": "P_N", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 48, "usage_context_id": 47, "line": 44, "col": 25, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 49, "usage_context_id": 46, "line": 44, "col": 33, "name": "P_TAG", "type": "FORMAL IN", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 50, "usage_context_id": 49, "line": 44, "col": 42, "name": "VARCHAR2", "type": "CHARACTER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 51, "usage_context_id": 46, "line": 45, "col": 5, "name": "V_X", "type": "VARIABLE", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 52, "usage_context_id": 51, "line": 45, "col": 9, "name": "NUMBER", "type": "NUMBER DATATYPE", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 53, "usage_context_id": 46, "line": 47, "col": 5, "name": "PROC_A", "type": "PROCEDURE", "usage": "CALL", "signature": "6F985FFE083A5C6FBBC67D13D7CD0985"},
+            {"usage_id": 54, "usage_context_id": 53, "line": 47, "col": 12, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 55, "usage_context_id": 46, "line": 48, "col": 5, "name": "RUN_DYNAMIC", "type": "PROCEDURE", "usage": "CALL", "signature": "ECE9682A452342C2C5E397C50AB2B6E4"},
+            {"usage_id": 56, "usage_context_id": 55, "line": 48, "col": 17, "name": "P_TAG", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 57, "usage_context_id": 46, "line": 49, "col": 5, "name": "V_X", "type": "VARIABLE", "usage": "ASSIGNMENT", "signature": null},
+            {"usage_id": 58, "usage_context_id": 57, "line": 49, "col": 12, "name": "CALC_OVERLOAD", "type": "FUNCTION", "usage": "CALL", "signature": "15AD55988A9AAF970F3ED0B340B6CDA4"},
+            {"usage_id": 59, "usage_context_id": 58, "line": 49, "col": 26, "name": "P_N", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null},
+            {"usage_id": 60, "usage_context_id": 46, "line": 50, "col": 5, "name": "V_X", "type": "VARIABLE", "usage": "ASSIGNMENT", "signature": null},
+            {"usage_id": 61, "usage_context_id": 60, "line": 50, "col": 12, "name": "CALC_OVERLOAD", "type": "FUNCTION", "usage": "CALL", "signature": "BC715965CB1F2CBD7DE6AC9AAA7608DD"},
+            {"usage_id": 62, "usage_context_id": 61, "line": 50, "col": 26, "name": "P_TAG", "type": "FORMAL IN", "usage": "REFERENCE", "signature": null}
+          ],
+          "statements": [
+            {"usage_id": 6, "usage_context_id": 3, "line": 6, "stmt_type": "INSERT"},
+            {"usage_id": 30, "usage_context_id": 25, "line": 28, "stmt_type": "EXECUTE IMMEDIATE"},
+            {"usage_id": 33, "usage_context_id": 25, "line": 31, "stmt_type": "EXECUTE IMMEDIATE"}
+          ]
+        }
+      ]
+    },
+    "GESTAO.PKG_M1": {
+      "_note": "Metade 1 do ciclo inter-package do teste (b): P1 chama PKG_M2.P2.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_M1", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P1", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_M1_P1"},
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 3, "name": "P2", "type": "PROCEDURE", "usage": "CALL", "signature": "SIG_M2_P2"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_M2": {
+      "_note": "Metade 2 do ciclo inter-package do teste (b): P2 chama PKG_M1.P1 de volta -- fecha o ciclo entre dois packages.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_M2", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P2", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_M2_P2"},
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 3, "name": "P1", "type": "PROCEDURE", "usage": "CALL", "signature": "SIG_M1_P1"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_REC": {
+      "_note": "Recursao DIRETA (teste b): P chama a si mesma.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_REC", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_REC_P"},
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 3, "name": "P", "type": "PROCEDURE", "usage": "CALL", "signature": "SIG_REC_P"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_CH_A": {
+      "_note": "Elo 1 da cadeia feliz inter-package do teste (c): P1 chama PKG_CH_B.P2.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_CH_A", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P1", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_CH_P1"},
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 3, "name": "P2", "type": "PROCEDURE", "usage": "CALL", "signature": "SIG_CH_P2"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_CH_B": {
+      "_note": "Elo 2 da cadeia feliz inter-package do teste (c): P2 chama PKG_CH_C.P3.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_CH_B", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P2", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_CH_P2"},
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 3, "name": "P3", "type": "PROCEDURE", "usage": "CALL", "signature": "SIG_CH_P3"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_CH_C": {
+      "_note": "Elo 3 (folha) da cadeia feliz inter-package do teste (c): P3 nao chama nada.",
+      "trees": [
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_CH_C", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "P3", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_CH_P3"}
+          ],
+          "statements": []
+        }
+      ]
+    },
+    "GESTAO.PKG_API": {
+      "_note": "Raiz de 2 partes (semeadura de API publica, entrega 2 do contrato): PUB1/PUB2 declarados na SPEC, sem overload.",
+      "trees": [
+        {
+          "object_type": "PACKAGE",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_API", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 2, "col": 3, "name": "PUB1", "type": "PROCEDURE", "usage": "DECLARATION", "signature": null},
+            {"usage_id": 3, "usage_context_id": 1, "line": 3, "col": 3, "name": "PUB2", "type": "PROCEDURE", "usage": "DECLARATION", "signature": null}
+          ],
+          "statements": []
+        },
+        {
+          "object_type": "PACKAGE BODY",
+          "identifiers": [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_API", "type": "PACKAGE", "usage": "DEFINITION", "signature": null},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "PUB1", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_API_PUB1"},
+            {"usage_id": 3, "usage_context_id": 1, "line": 7, "col": 1, "name": "PUB2", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_API_PUB2"}
+          ],
+          "statements": []
+        }
+      ]
+    }
+  }
+}
