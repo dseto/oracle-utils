@@ -14,10 +14,14 @@ os casos de "soma quebrada" (o cerne da prova do T-08) constroem um
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import Any, List, Optional, Tuple
 
 import pytest
 
+from plsqlflow.attribute import Assignment, IdentifierRow
 from plsqlflow.procgraph import ProcEdge, ProcGraphResult, ProcNode, build_proc_graph
+from plsqlflow.procgraph_access import expand_access
 from plsqlflow.procgraph_render import (
     CoverageError,
     build_coverage,
@@ -26,6 +30,7 @@ from plsqlflow.procgraph_render import (
     node_ref,
     render_graph,
 )
+from tests.test_procgraph_access import _TriggerCycleExtractor
 from tests.test_procgraph_bfs import FakeExtractor, _load_fixture
 from tests.test_procgraph_fallback import FakeDepExtractor, FakeProcExtractor
 
@@ -80,7 +85,14 @@ def test_coverage_sums_close_on_golden_fixture():
     # realmente lidos via PL/Scope, ver ProcGraphResult.statements_read) --
     # a soma so fecha porque `build_coverage` ja PROVOU (ou teria levantado
     # CoverageError) que cada statement lido tem aresta correspondente.
-    assert coverage.statements_read_subprogram + coverage.statements_read_init_spec == coverage.statements_read_total
+    # `statements_no_dependency` (correcao do DEFEITO BLOQUEANTE) entra na
+    # mesma soma -- balde proprio, nao um extra escondido.
+    assert (
+        coverage.statements_read_subprogram
+        + coverage.statements_read_init_spec
+        + coverage.statements_no_dependency
+        == coverage.statements_read_total
+    )
     assert coverage.statements_read_total == len(result.statements_read)
     assert coverage.nodes_total == len(result.nodes)
 
@@ -205,10 +217,32 @@ def test_coverage_raises_when_a_read_statement_has_no_edge_at_all():
         blind_spots=[],
         needs_recompile=[],
         stats={},
-        statements_read=[("GESTAO.X.P1", 5)],
+        statements_read=[("GESTAO.X.P1", 5, "SELECT")],
     )
 
     with pytest.raises(CoverageError, match="statements"):
+        build_coverage(bogus, FULL_CAPABILITIES)
+
+
+def test_coverage_error_names_the_unknown_statement_type():
+    # Correcao do DEFEITO BLOQUEANTE (relatorio de verificacao
+    # independente): tipo GENUINAMENTE desconhecido continua levantando
+    # CoverageError -- o sinal alto do Defeito 1 sobrevive intato -- mas
+    # agora a mensagem tem que NOMEAR o tipo, nao so o ref/linha, para
+    # quem le o erro entender o que faltou tratar.
+    bogus = ProcGraphResult(
+        nodes=[ProcNode(owner="GESTAO", object_name="X", subprogram="P1", grain="subprogram")],
+        edges=[],
+        truncated=False,
+        truncation_reason=None,
+        not_expanded=[],
+        blind_spots=[],
+        needs_recompile=[],
+        stats={},
+        statements_read=[("GESTAO.X.P1", 5, "TIPO_QUE_NAO_EXISTE")],
+    )
+
+    with pytest.raises(CoverageError, match="TIPO_QUE_NAO_EXISTE"):
         build_coverage(bogus, FULL_CAPABILITIES)
 
 
@@ -226,7 +260,7 @@ def test_coverage_passes_when_the_only_edge_is_a_dynamic_sql_marker():
         blind_spots=["GESTAO.X.P1 L5 [opaque] -> ?"],
         needs_recompile=[],
         stats={},
-        statements_read=[("GESTAO.X.P1", 5)],
+        statements_read=[("GESTAO.X.P1", 5, "EXECUTE IMMEDIATE")],
     )
 
     coverage = build_coverage(bogus, FULL_CAPABILITIES)
@@ -244,7 +278,7 @@ def test_render_graph_raises_and_writes_nothing_when_statement_unrepresented(tmp
         blind_spots=[],
         needs_recompile=[],
         stats={},
-        statements_read=[("GESTAO.X.P1", 5)],
+        statements_read=[("GESTAO.X.P1", 5, "SELECT")],
     )
     out_dir = tmp_path / "broken-graph-statements"
 
@@ -266,7 +300,234 @@ def test_coverage_label_calls_fallback_edges_arestas_not_statements(tmp_path):
 
     index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
     assert "statements lidos (PL/Scope, denominador honesto)" in index_text
-    assert "arestas de acesso/estado/trigger/SQL dinamico em grao objeto" in index_text
+    assert "arestas de acesso/estado/SQL dinamico em grao objeto" in index_text
+
+
+# --------------------------------------------------------------------------
+# DEFEITO BLOQUEANTE (relatorio de verificacao independente, 2026-08-16):
+# COMMIT/ROLLBACK/FETCH/CLOSE (e demais tipos sem dependencia de dados por
+# natureza) NAO podem mais abortar render_graph inteiro. Este e o teste
+# CENTRAL exigido pela correcao: o cenario constroi exatamente o caso em
+# que o codigo ANTES da correcao levantava CoverageError e gravava ZERO
+# arquivos -- so um COMMIT dentro de um subprograma real, sem nenhum SQL
+# dinamico envolvido.
+# --------------------------------------------------------------------------
+
+
+class _TransactionalBatchExtractor:
+    """Fake de `procgraph.ProcExtractor`: pacote GESTAO.BATCH_PKG com UMA
+    procedure (RUN_BATCH) que mistura um INSERT real (dependencia de dado
+    de verdade) com COMMIT/ROLLBACK/FETCH/CLOSE (controle transacional e
+    de cursor estatico, sem dependencia nenhuma) -- o padrao mais comum de
+    PL/SQL batch/transacional, exatamente o alvo declarado pelo usuario
+    ("processos gigantes, com centenas de sub chamadas")."""
+
+    def __init__(self) -> None:
+        self._identifiers = [
+            {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "BATCH_PKG", "type": "PACKAGE", "usage": "DEFINITION", "signature": None},
+            {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 1, "name": "RUN_BATCH", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_RUN_BATCH"},
+            # tabela referenciada pelo INSERT (usage_id=3) -- filha direta
+            # do statement (usage_context_id=3, mesma convencao do resto
+            # da suite, ver _TriggerCycleExtractor em test_procgraph_access.py).
+            {"usage_id": 4, "usage_context_id": 3, "line": 4, "col": 10, "name": "BATCH_LOG", "type": "TABLE", "usage": "REFERENCE", "signature": None},
+        ]
+        self._statements = [
+            {"usage_id": 3, "usage_context_id": 2, "line": 4, "stmt_type": "INSERT"},
+            {"usage_id": 5, "usage_context_id": 2, "line": 5, "stmt_type": "COMMIT"},
+            {"usage_id": 6, "usage_context_id": 2, "line": 6, "stmt_type": "ROLLBACK"},
+            {"usage_id": 7, "usage_context_id": 2, "line": 7, "stmt_type": "FETCH"},
+            {"usage_id": 8, "usage_context_id": 2, "line": 8, "stmt_type": "CLOSE"},
+        ]
+
+    def _matches(self, owner: str, object_name: str) -> bool:
+        return (owner.upper(), object_name.upper()) == ("GESTAO", "BATCH_PKG")
+
+    def plscope_identifiers(self, owner: str, object_name: str) -> List[Any]:
+        if not self._matches(owner, object_name):
+            return []
+        return [SimpleNamespace(object_type="PACKAGE BODY", **row) for row in self._identifiers]
+
+    def plscope_statements(self, owner: str, object_name: str) -> List[Any]:
+        if not self._matches(owner, object_name):
+            return []
+        return [SimpleNamespace(object_type="PACKAGE BODY", **row) for row in self._statements]
+
+    def resolve_owner(self, signature: str) -> Optional[Tuple[str, str]]:
+        return None
+
+
+def test_build_coverage_accepts_commit_rollback_fetch_close_without_raising():
+    # A prova central em isolamento (sem tocar disco): build_coverage NAO
+    # levanta mais para este cenario -- os quatro statements sem
+    # dependencia (COMMIT/ROLLBACK/FETCH/CLOSE) caem no balde proprio, o
+    # INSERT continua no balde normal.
+    extractor = _TransactionalBatchExtractor()
+    result = build_proc_graph(extractor, ("GESTAO", "BATCH_PKG", "RUN_BATCH"))
+
+    coverage = build_coverage(result, {"resolve_owner": True})
+    assert coverage.statements_no_dependency == 4
+    assert coverage.statements_read_subprogram == 1  # so o INSERT
+    assert coverage.statements_read_total == 5
+
+
+def test_render_graph_writes_files_normally_when_subprogram_has_commit(tmp_path):
+    # ANTES da correcao: este cenario levantava CoverageError e
+    # render_graph gravava ZERO arquivos (nem o diretorio). DEPOIS: os
+    # arquivos sao gravados normalmente.
+    extractor = _TransactionalBatchExtractor()
+    result = build_proc_graph(extractor, ("GESTAO", "BATCH_PKG", "RUN_BATCH"))
+    out_dir = tmp_path / "graph-commit-batch"
+
+    written = render_graph(result, out_dir, {"capabilities": {"resolve_owner": True}})
+
+    assert out_dir.exists()
+    assert (out_dir / "INDEX.md").exists()
+    assert (out_dir / "edges.jsonl").exists()
+    assert all(p.exists() for p in written)
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+    assert (
+        "statements sem dependencia de dados por natureza (controle transacional: "
+        "COMMIT/ROLLBACK/SAVEPOINT/SET TRANSACTION/LOCK TABLE; cursor estatico: OPEN/"
+        "FETCH/CLOSE) = 4"
+    ) in index_text
+
+    edges_text = (out_dir / "edges.jsonl").read_text(encoding="utf-8")
+    no_dep_payloads = [
+        json.loads(line) for line in edges_text.splitlines() if json.loads(line)["edge_type"] == "NO_DATA_DEP"
+    ]
+    assert len(no_dep_payloads) == 4
+    assert {p["op"] for p in no_dep_payloads} == {"COMMIT", "ROLLBACK", "FETCH", "CLOSE"}
+    assert all(p["from_ref"] == "GESTAO.BATCH_PKG.RUN_BATCH" for p in no_dep_payloads)
+
+    # O INSERT continua com WRITE normal -- a correcao nao muda o
+    # tratamento dos tipos que ja funcionavam.
+    write_payloads = [json.loads(line) for line in edges_text.splitlines() if json.loads(line)["edge_type"] == "WRITE"]
+    assert len(write_payloads) == 1
+    assert write_payloads[0]["to_ref"] == "GESTAO.BATCH_LOG"
+
+
+def test_coverage_error_message_names_unknown_type_end_to_end():
+    # Mesmo cenario do teste acima, mas trocando UM dos statements por um
+    # tipo GENUINAMENTE desconhecido -- o sinal alto do Defeito 1 tem que
+    # sobreviver: CoverageError, com o nome do tipo na mensagem, ZERO
+    # arquivos gravados.
+    class _UnknownTypeExtractor(_TransactionalBatchExtractor):
+        def __init__(self) -> None:
+            super().__init__()
+            self._statements = [
+                {"usage_id": 3, "usage_context_id": 2, "line": 4, "stmt_type": "INSERT"},
+                {"usage_id": 5, "usage_context_id": 2, "line": 5, "stmt_type": "TIPO_QUE_NAO_EXISTE"},
+            ]
+
+    extractor = _UnknownTypeExtractor()
+    result = build_proc_graph(extractor, ("GESTAO", "BATCH_PKG", "RUN_BATCH"))
+
+    with pytest.raises(CoverageError, match="TIPO_QUE_NAO_EXISTE"):
+        build_coverage(result, {"resolve_owner": True})
+
+
+def test_render_graph_writes_nothing_for_unknown_statement_type(tmp_path):
+    class _UnknownTypeExtractor(_TransactionalBatchExtractor):
+        def __init__(self) -> None:
+            super().__init__()
+            self._statements = [
+                {"usage_id": 3, "usage_context_id": 2, "line": 4, "stmt_type": "INSERT"},
+                {"usage_id": 5, "usage_context_id": 2, "line": 5, "stmt_type": "TIPO_QUE_NAO_EXISTE"},
+            ]
+
+    extractor = _UnknownTypeExtractor()
+    result = build_proc_graph(extractor, ("GESTAO", "BATCH_PKG", "RUN_BATCH"))
+    out_dir = tmp_path / "graph-unknown-type"
+
+    with pytest.raises(CoverageError, match="TIPO_QUE_NAO_EXISTE"):
+        render_graph(result, out_dir, {"capabilities": {"resolve_owner": True}})
+
+    assert not out_dir.exists()
+
+
+# --------------------------------------------------------------------------
+# DEFEITO NAO-BLOQUEANTE (mesmo relatorio): TRIGGER_FIRES nao pode ser
+# contado como se fosse fallback de grao objeto (sem PL/Scope) -- e
+# estrutural (tabela -> trigger, sempre 2 partes), nao um sinal de
+# capacidade ausente.
+# --------------------------------------------------------------------------
+
+
+def test_trigger_fires_edges_counted_separately_from_object_fallback(tmp_path):
+    # T1 -> TRG1 -> T2 -> TRG2 -> T1 (mesmo ciclo de
+    # test_procgraph_access.py::test_trigger_cycle_between_two_tables_terminates_and_is_declared),
+    # 100% PL/Scope disponivel em todos os objetos -- ZERO fallback de
+    # grao objeto de verdade. Antes da correcao, as arestas TRIGGER_FIRES
+    # (from_ref de 2 partes por desenho) eram contadas junto com o
+    # fallback e rotuladas "sem PL/Scope disponivel", uma mentira: a
+    # saida real ja mostrou "= 1 arestas" atribuido a fallback com
+    # fallback_objects: 0.
+    extractor = _TriggerCycleExtractor()
+    result = build_proc_graph(extractor, ("GESTAO", "P_START", "START"))
+
+    coverage = build_coverage(result, {"resolve_owner": True, "triggers": True})
+    assert coverage.edges_trigger_fires == 2  # T1->TRG1, T2->TRG2
+    assert coverage.statements_edges_object == 0  # nenhum fallback de verdade
+
+    out_dir = tmp_path / "graph-trigger-cycle"
+    render_graph(result, out_dir, {"capabilities": {"resolve_owner": True, "triggers": True}})
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+    assert "arestas TRIGGER_FIRES" in index_text
+    assert "= 2 arestas" in index_text
+    # a linha de fallback de verdade tem que mostrar ZERO, nunca a
+    # contagem de TRIGGER_FIRES emprestada por engano.
+    fallback_line = next(
+        line
+        for line in index_text.splitlines()
+        if line.startswith("arestas de acesso/estado/SQL dinamico em grao objeto")
+    )
+    assert fallback_line.rstrip().endswith("= 0 arestas")
+
+
+# --------------------------------------------------------------------------
+# OPEN ... FOR dinamico NAO pode ser engolido pelo balde novo (CUIDADO
+# explicito do relatorio) -- continua classificado DYNAMIC_SQL.
+# --------------------------------------------------------------------------
+
+
+def test_open_for_dynamic_stays_dynamic_sql_never_no_dependency():
+    identifiers = [
+        IdentifierRow(1, 0, 1, 1, "PKG", "PACKAGE", "DEFINITION"),
+        IdentifierRow(2, 1, 3, 1, "RUNNER", "PROCEDURE", "DEFINITION", "SIG_RUNNER"),
+    ]
+    cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY", body_statements=[])
+    # stmt_type real do OPEN dinamico e "OPEN FOR" (report.py::DYNSQL_STMT_TYPES
+    # ja usa este literal exato, confirmado contra o banco dev) -- distinto
+    # do "OPEN" estatico (sem "FOR"), que cai no balde novo.
+    statement = Assignment(usage_id=3, line=7, kind="STMT", target="OPEN FOR", enclosing="RUNNER")
+
+    edges = expand_access(
+        owner="GESTAO", object_name="PKG", subprogram="RUNNER", statement=statement, object_cache=cache
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].confidence == "opaque"  # sem extractor.source neste teste
+
+
+def test_open_static_falls_into_no_dependency_bucket():
+    identifiers = [
+        IdentifierRow(1, 0, 1, 1, "PKG", "PACKAGE", "DEFINITION"),
+        IdentifierRow(2, 1, 3, 1, "RUNNER", "PROCEDURE", "DEFINITION", "SIG_RUNNER"),
+    ]
+    cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY")
+    # "OPEN" estatico -- SEM "FOR" -- abre um cursor JA declarado.
+    statement = Assignment(usage_id=3, line=7, kind="STMT", target="OPEN", enclosing="RUNNER")
+
+    edges = expand_access(
+        owner="GESTAO", object_name="PKG", subprogram="RUNNER", statement=statement, object_cache=cache
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "NO_DATA_DEP"
+    assert edges[0].op == "OPEN"
 
 
 # --------------------------------------------------------------------------

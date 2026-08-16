@@ -71,6 +71,44 @@ modulo la, secao "Seam de acesso"). Tres entregas do contrato:
    `dep_extractor` so degrada "partial" para "opaque" com mais frequencia
    (nunca vira excecao, nunca omite).
 
+5. Correcao de DEFEITO BLOQUEANTE (relatorio de verificacao independente
+   sobre este mesmo contrato, 2026-08-16): ANTES desta correcao, um STMT
+   cujo tipo nao fosse SELECT/INSERT/UPDATE/DELETE/MERGE nem dinamico
+   virava `[]` incondicional (ver o comentario antigo, ainda citado por
+   `_NO_DEPENDENCY_STMT_TYPES` abaixo) -- e como `procgraph_render.
+   build_coverage` exige que TODO statement lido tenha pelo menos uma
+   aresta, um UNICO `COMMIT`/`ROLLBACK`/`FETCH`/`CLOSE` dentro de
+   QUALQUER subprograma derrubava a geracao INTEIRA (`CoverageError`,
+   ZERO arquivos gravados) -- nao um ponto cego declarado, uma RECUSA
+   TOTAL. Exatamente o padrao mais comum de PL/SQL batch/transacional, o
+   alvo declarado do usuario ("processos gigantes, com centenas de sub
+   chamadas").
+
+   A correcao distingue DOIS casos que o `[]` antigo tratava como um so:
+
+   (a) tipo que, POR NATUREZA, nao tem dependencia de dados --
+       `_NO_DEPENDENCY_STMT_TYPES` (controle transacional: COMMIT/
+       ROLLBACK/SAVEPOINT/SET TRANSACTION/LOCK TABLE; controle de cursor
+       ESTATICO: OPEN/FETCH/CLOSE). Ganha uma aresta marcadora
+       `NO_DATA_DEP` (`_no_dependency_edge`) -- nao aponta para nenhum
+       objeto real (nao ha nenhum: e exatamente o ponto), so prova para
+       a reconciliacao de COBERTURA que o statement foi CONTADO e esta
+       VISIVEL (balde proprio, rotulo honesto -- nunca "[]" silencioso,
+       nunca `CoverageError`).
+   (b) tipo GENUINAMENTE desconhecido (nunca catalogado nem aqui nem em
+       `_is_dynamic_stmt_type`) continua devolvendo `[]`. O sinal alto do
+       Defeito 1 sobrevive INTATO para este caso -- `procgraph_render.
+       build_coverage` ainda levanta `CoverageError` (agora com o nome
+       do tipo na mensagem, ver `ProcGraphResult.statements_read` em
+       `procgraph.py`), so deixa de disparar para o caso NORMAL de
+       PL/SQL transacional/cursor explicito.
+
+   `OPEN` estatico (sem "FOR") entra na familia (a); `OPEN ... FOR`
+   dinamico (cursor aberto com SQL montado em runtime) continua caindo
+   no ramo de SQL dinamico ACIMA -- `_is_dynamic_stmt_type` foi ajustada
+   para distinguir os dois (ver docstring da funcao) precisamente para
+   que esta entrega NUNCA engula o caso dinamico.
+
 Duas FORMAS de chamada, ambas vindo do mesmo seam (`kwargs["statement"]`
 distingue -- ver `procgraph.py::_process_stmt`, que agora chama duas
 vezes por subprograma):
@@ -337,19 +375,120 @@ def _discover_triggers(
 
 
 def _is_dynamic_stmt_type(stmt_type: str) -> bool:
-    """Mesmo criterio de `depgraph_enrich._looks_dynamic_stmt_type`
-    (simbolo privado de outro modulo -- duplicado aqui em vez de
-    importado, mesma razao ja documentada na docstring do modulo):
-    EXECUTE IMMEDIATE exato, OPEN ... FOR (cursor dinamico, prefixo OPEN)
-    ou qualquer variante de DBMS_SQL.PARSE/.OPEN_CURSOR."""
+    """EXECUTE IMMEDIATE exato, OPEN ... FOR (cursor dinamico) ou qualquer
+    variante de DBMS_SQL.PARSE/.OPEN_CURSOR.
+
+    Ajustada (correcao do DEFEITO BLOQUEANTE, ver secao 5 da docstring do
+    modulo) para distinguir OPEN ESTATICO de OPEN DINAMICO -- os dois
+    comecam com o mesmo prefixo "OPEN", mas so o dinamico carrega "FOR"
+    no proprio `stmt_type`.
+
+    ORIGEM DESSA PREMISSA, E O RISCO QUE ELA CARREGA: o literal exato
+    "OPEN FOR" vem de `report.py::DYNSQL_STMT_TYPES`, constante que ja
+    existia no repo para o mesmo proposito. NAO foi confirmado contra
+    banco: nenhum schema acessivel nesta maquina tem um unico statement
+    do tipo OPEN (`SELECT type, COUNT(*) FROM all_statements WHERE
+    owner='GESTAO' GROUP BY type` devolve so EXECUTE IMMEDIATE e INSERT).
+    Se algum release do Oracle emitir `type='OPEN'` (sem o FOR) para
+    abertura de ref cursor DINAMICO, este ramo classifica errado.
+    Consequencia limitada e deliberada: o statement vai para
+    `_NO_DEPENDENCY_STMT_TYPES`, onde ainda ganha aresta marcadora e
+    entra contado e visivel na COBERTURA -- ele NAO some (a regra
+    inegociavel do contrato continua valendo). O que se perde e a entrada
+    em PONTOS CEGOS, ou seja, quem migra nao seria avisado de que ha SQL
+    dinamico ali. Conferir contra um schema real que use ref cursor
+    dinamico antes de tratar esta premissa como fato.
+
+    Antes desta correcao, `startswith("OPEN")` sozinho
+    tambem capturava `OPEN` estatico (abertura de um cursor JA declarado
+    com SELECT proprio, sem SQL novo nenhum) -- o que o rotearia para
+    `_dynamic_sql_edges` em vez do balde correto de "sem dependencia de
+    dados por natureza" (`_NO_DEPENDENCY_STMT_TYPES`). Mesmo criterio de
+    `depgraph_enrich._looks_dynamic_stmt_type` (simbolo privado de outro
+    modulo -- duplicado aqui em vez de importado, mesma razao ja
+    documentada na docstring do modulo) para EXECUTE IMMEDIATE/DBMS_SQL;
+    so o ramo OPEN foi apertado."""
     upper = (stmt_type or "").upper().strip()
     if upper == "EXECUTE IMMEDIATE":
         return True
-    if upper.startswith("OPEN"):
+    if upper.startswith("OPEN") and upper != "OPEN":
+        # "OPEN FOR" (ou qualquer variante "OPEN <algo>") e dinamico;
+        # "OPEN" sozinho e cursor ESTATICO -- ver `_NO_DEPENDENCY_STMT_TYPES`.
         return True
     if "DBMS_SQL" in upper:
         return True
     return False
+
+
+# --------------------------------------------------------------------------
+# DEFEITO BLOQUEANTE (correcao): statement sem dependencia de dados por
+# natureza -- ver secao 5 da docstring do modulo.
+# --------------------------------------------------------------------------
+
+# Duas familias, cada uma com o PORQUE registrado:
+#
+# 1. CONTROLE TRANSACIONAL (COMMIT/ROLLBACK/SAVEPOINT/SET TRANSACTION/
+#    LOCK TABLE): o efeito e sobre o ESTADO DA TRANSACAO (ou um lock de
+#    tabela inteira, sem alvo de coluna), nunca sobre dado de uma tabela/
+#    coluna especifica -- nao ha READ nem WRITE para atribuir, por
+#    construcao da propria linguagem (nenhum destes statements referencia
+#    dado, so o controla).
+#
+# 2. CONTROLE DE CURSOR ESTATICO (OPEN/FETCH/CLOSE -- `stmt_type`
+#    literalmente "OPEN", nunca "OPEN FOR"; ver `_is_dynamic_stmt_type`
+#    para o motivo de OPEN dinamico nunca chegar aqui): o SELECT do
+#    cursor ja foi registrado como STATEMENT proprio na DECLARACAO dele
+#    (`CURSOR c IS SELECT ...`) -- esse SELECT sim gera READ normalmente,
+#    pela mesma `_table_access_edges` (entrega 1 acima). OPEN/FETCH/CLOSE
+#    so movem o ponteiro de um cursor JA aberto -- reafirmar a mesma
+#    tabela como dependencia de novo duplicaria a informacao, nunca
+#    completaria.
+_NO_DEPENDENCY_STMT_TYPES = (
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "SET TRANSACTION",
+    "LOCK TABLE",
+    "OPEN",
+    "FETCH",
+    "CLOSE",
+)
+
+# edge_type sintetico desta correcao -- nunca aparece em
+# `_TABLE_EDGE_TYPES`/`_STATE_EDGE_TYPES`/`_TRIGGER_EDGE_TYPE` (secoes do
+# node .md em procgraph_render.py), entao nao some com nada que ja existe;
+# so entra na reconciliacao de COBERTURA como balde proprio.
+_NO_DATA_DEP_EDGE_TYPE = "NO_DATA_DEP"
+# marcador sintetico fixo -- nunca um objeto real (nao ha nenhum para um
+# COMMIT apontar; mesmo espirito de `UNKNOWN_TARGET`, mas semanticamente
+# distinto: UNKNOWN_TARGET diz "alvo desconhecido", este diz "nao ha alvo
+# nenhum, por natureza do statement").
+_NO_DATA_DEP_TARGET = "__NO_DATA_DEP__"
+
+
+def _no_dependency_edge(
+    owner: str,
+    object_name: str,
+    subprogram: str,
+    statement: Any,
+    stmt_type: str,
+    proc_edge_cls: Any,
+) -> Any:
+    """Aresta marcadora para um STMT cujo tipo esta em
+    `_NO_DEPENDENCY_STMT_TYPES` -- prova para `procgraph_render.
+    build_coverage` que o statement foi CONTADO e esta VISIVEL, mesmo sem
+    nenhum READ/WRITE real (nao ha dado nenhum para apontar, por
+    natureza do statement -- ver secao 5 da docstring do modulo). `op`
+    carrega o `stmt_type` exato (COMMIT/ROLLBACK/FETCH/etc.), mesma
+    convencao de `WRITE.op`, para quem ler `edges.jsonl`/o node .md saber
+    qual statement gerou a aresta."""
+    return proc_edge_cls(
+        from_ref=_ref(owner, object_name, subprogram),
+        to_ref=_NO_DATA_DEP_TARGET,
+        edge_type=_NO_DATA_DEP_EDGE_TYPE,
+        line=getattr(statement, "line", None),
+        op=stmt_type,
+    )
 
 
 def _catalog_names_for(owner: str, dep_extractor: Optional[Any]) -> List[str]:
@@ -474,16 +613,26 @@ def _table_access_edges(
             owner, object_name, subprogram, statement, object_cache, extractor, dep_extractor, proc_edge_cls
         )
 
+    if stmt_type in _NO_DEPENDENCY_STMT_TYPES:
+        # Correcao do DEFEITO BLOQUEANTE (secao 5 da docstring do modulo):
+        # tipo SEM dependencia de dados POR NATUREZA (controle
+        # transacional ou cursor ESTATICO) -- aresta marcadora
+        # `NO_DATA_DEP`, nunca `[]`. Distinto do ramo abaixo: aqui o tipo
+        # E CONHECIDO e a ausencia de READ/WRITE e a resposta CORRETA,
+        # nao uma lacuna.
+        return [_no_dependency_edge(owner, object_name, subprogram, statement, stmt_type, proc_edge_cls)]
+
     if stmt_type not in _READ_STMT_TYPES and stmt_type not in _WRITE_STMT_TYPES:
-        # Qualquer outro tipo de statement (ex.: COMMIT/ROLLBACK/LOCK
-        # TABLE/FETCH/CLOSE de cursor estatico) fica fora das 4 entregas
-        # deste seam -- mesma fronteira que `depgraph_enrich.
-        # table_edges_from_statements` ja usa no modo nao-granular. Isto
-        # devolve `[]` deliberadamente: a reconciliacao de COBERTURA
-        # (procgraph_render.py, defeito 2) e quem PROVA que nenhum
-        # statement lido fica sem representacao -- se este tipo aparecer
-        # na pratica, ela quebra alto (CoverageError) em vez de deixar o
-        # gap passar batido, mesma filosofia que pegou o Defeito 1.
+        # Tipo GENUINAMENTE desconhecido -- nem SELECT/INSERT/UPDATE/
+        # DELETE/MERGE, nem dinamico (`_is_dynamic_stmt_type`), nem um
+        # dos tipos catalogados como "sem dependencia por natureza"
+        # (`_NO_DEPENDENCY_STMT_TYPES`) logo acima. Devolve `[]`
+        # deliberadamente: a reconciliacao de COBERTURA (procgraph_render.
+        # py, defeito 2) e quem PROVA que nenhum statement lido fica sem
+        # representacao -- um tipo nunca visto antes precisa quebrar ALTO
+        # (CoverageError, com o nome do tipo na mensagem) em vez de deixar
+        # o gap passar batido, mesma filosofia que pegou o Defeito 1. Esta
+        # e a UNICA categoria que ainda propaga ate CoverageError.
         return []
 
     children = _statement_children(statement, object_cache)

@@ -9,7 +9,7 @@
     "tests/test_cli_granular.py"
   ],
   "verify_cmd": "pytest tests/test_procgraph_render.py tests/test_cli_granular.py -q",
-  "recorded_at": "2026-08-16T02:24:28.741096+00:00",
+  "recorded_at": "2026-08-16T03:29:24.124004+00:00",
   "exit_code": 0,
-  "files_hash": "sha256:e5a70dd2fe1a93b5a8d1cd959ab8391ea58d9e5ec976ea927e39c604e9e73a7e"
+  "files_hash": "sha256:6dbc60445a6bd0b788b7c6b61879154ef908d5f936366f52e2e0f3d1529614df"
 }

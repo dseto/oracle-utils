@@ -20,11 +20,11 @@ _Demanda ENCERRADA por `harness finish`._
 ## Última atualização
 
 <!-- harness:auto -->
-- 2026-08-16T02:24:22.760852+00:00 — T-05 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-05.json
-- 2026-08-16T02:24:28.741096+00:00 — T-08 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-08.json
-- 2026-08-16T02:24:30.659207+00:00 — T-03 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-03.json
 - 2026-08-16T02:24:39.683648+00:00 — T-04 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-04.json
 - 2026-08-16T02:24:44.292348+00:00 — T-07 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-07.json
+- 2026-08-16T03:29:18.068407+00:00 — T-05 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-05.json
+- 2026-08-16T03:29:24.124004+00:00 — T-08 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-08.json
+- 2026-08-16T03:29:26.056564+00:00 — T-03 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-03.json
 <!-- /harness:auto -->
 
 

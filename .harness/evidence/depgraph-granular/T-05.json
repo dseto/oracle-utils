@@ -9,7 +9,7 @@
     "plsqlflow/attribute.py"
   ],
   "verify_cmd": "pytest tests/test_procgraph_access.py -q",
-  "recorded_at": "2026-08-16T02:24:42.329485+00:00",
+  "recorded_at": "2026-08-16T03:29:28.564672+00:00",
   "exit_code": 0,
-  "files_hash": "sha256:a528d7576c29529b12d1124503763943987637dbad1c04efc5615481814b5952"
+  "files_hash": "sha256:16a0ebccb38844675a4f9e5546063fd43a24f382417abfe284ee899c23a7edc1"
 }

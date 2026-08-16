@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
+import pytest
+
 from plsqlflow import depgraph_enrich, extract
 from plsqlflow.attribute import Assignment, IdentifierRow, StatementRow, assign_context
 from plsqlflow.procgraph import ProcEdge, build_proc_graph
@@ -237,6 +239,89 @@ def test_unknown_target_marker_when_no_table_found():
     edges = expand_access(owner="GESTAO", object_name="PKG", subprogram="P", statement=statement, object_cache=cache)
     assert len(edges) == 1
     assert edges[0].to_ref == depgraph_enrich.UNKNOWN_TARGET
+
+
+# --------------------------------------------------------------- entrega 5
+#
+# DEFEITO BLOQUEANTE (relatorio de verificacao independente sobre este
+# contrato, 2026-08-16): antes desta correcao, `_table_access_edges`
+# devolvia `[]` para QUALQUER stmt_type fora de SELECT/INSERT/UPDATE/
+# DELETE/MERGE/dinamico -- o proprio comentario do codigo citava COMMIT/
+# ROLLBACK/LOCK TABLE/FETCH/CLOSE como exemplo. Como a reconciliacao de
+# COBERTURA (procgraph_render.py) exige aresta para todo statement lido,
+# um UNICO COMMIT dentro de QUALQUER subprograma derrubava render_graph
+# inteiro (CoverageError, zero arquivos). Os testes abaixo cobrem o seam
+# em isolamento: cada tipo catalogado como "sem dependencia por natureza"
+# ganha aresta NO_DATA_DEP (nunca `[]`); tipo desconhecido continua `[]`.
+
+
+def _no_dep_cache() -> SimpleNamespace:
+    identifiers = [
+        IdentifierRow(1, 0, 1, 1, "PKG", "PACKAGE", "DEFINITION"),
+        IdentifierRow(2, 1, 3, 1, "P", "PROCEDURE", "DEFINITION", "SIG_P"),
+    ]
+    return SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY")
+
+
+@pytest.mark.parametrize(
+    "stmt_type",
+    [
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT",
+        "SET TRANSACTION",
+        "LOCK TABLE",
+        "OPEN",
+        "FETCH",
+        "CLOSE",
+    ],
+)
+def test_no_dependency_statement_types_get_marker_edge_never_empty(stmt_type):
+    statement = Assignment(usage_id=3, line=9, kind="STMT", target=stmt_type, enclosing="P")
+
+    edges = expand_access(
+        owner="GESTAO", object_name="PKG", subprogram="P", statement=statement, object_cache=_no_dep_cache()
+    )
+
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.edge_type == "NO_DATA_DEP"
+    assert edge.from_ref == "GESTAO.PKG.P"
+    assert edge.op == stmt_type
+    assert edge.line == 9
+    # nunca aponta para um objeto/tabela real -- nao ha nenhum, por
+    # natureza do statement.
+    assert edge.to_ref != depgraph_enrich.UNKNOWN_TARGET
+
+
+def test_genuinely_unknown_statement_type_still_returns_empty():
+    # O sinal alto do Defeito 1 sobrevive INTATO para este caso -- so o
+    # caso NORMAL (controle transacional/cursor) deixa de derrubar tudo.
+    statement = Assignment(usage_id=3, line=9, kind="STMT", target="TIPO_QUE_NAO_EXISTE", enclosing="P")
+
+    edges = expand_access(
+        owner="GESTAO", object_name="PKG", subprogram="P", statement=statement, object_cache=_no_dep_cache()
+    )
+
+    assert edges == []
+
+
+def test_open_for_dynamic_never_falls_into_no_dependency_bucket():
+    # CUIDADO explicito do relatorio: OPEN ... FOR (cursor dinamico) e SQL
+    # dinamico, tratado no ramo de cima -- a lista nova (OPEN estatico)
+    # nao pode engolir este caso. stmt_type real confirmado contra o
+    # banco dev (report.py::DYNSQL_STMT_TYPES) e "OPEN FOR", distinto do
+    # "OPEN" estatico (sem "FOR").
+    statement = Assignment(usage_id=3, line=9, kind="STMT", target="OPEN FOR", enclosing="P")
+    cache = SimpleNamespace(body_identifiers=_no_dep_cache().body_identifiers, body_type="PACKAGE BODY", body_statements=[])
+
+    edges = expand_access(
+        owner="GESTAO", object_name="PKG", subprogram="P", statement=statement, object_cache=cache
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].edge_type != "NO_DATA_DEP"
 
 
 # --------------------------------------------------------------- entrega 2
@@ -799,7 +884,7 @@ def test_build_proc_graph_attributes_both_dynamic_sql_lines_to_run_dynamic_never
     # statements_read (denominador honesto da COBERTURA, defeito 2) --
     # ambas representadas por aresta.
     run_dynamic_stmts = [
-        (ref, line) for ref, line in result.statements_read if ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
+        (ref, line) for ref, line, _stmt_type in result.statements_read if ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
     ]
     assert sorted(run_dynamic_stmts) == [
         ("GESTAO.FLOW_DEMO.RUN_DYNAMIC", 28),

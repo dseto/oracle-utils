@@ -397,15 +397,20 @@ class ProcGraphResult:
     needs_recompile: List[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     # Denominador honesto da reconciliacao de COBERTURA (correcao do
-    # DEFEITO 2, procgraph_render.build_coverage): um par (ref, line) por
-    # STMT de fato despachado a `_process_stmt` (nunca por aresta -- a
-    # soma antiga contava arestas com o rotulo "statements" e fechava
-    # mesmo quando um statement nao gerava aresta nenhuma, exatamente o
-    # buraco que deixou o SQL dinamico de RUN_DYNAMIC sumir sem erro).
-    # Populado por `_ProcGraphEngine.to_result()`; default vazio preserva
-    # compatibilidade com `ProcGraphResult(...)` construido a mao nos
-    # testes existentes (mesmo padrao de `needs_recompile`/`stats` acima).
-    statements_read: List[Tuple[str, int]] = field(default_factory=list)
+    # DEFEITO 2, procgraph_render.build_coverage): uma tripla
+    # (ref, line, stmt_type) por STMT de fato despachado a `_process_stmt`
+    # (nunca por aresta -- a soma antiga contava arestas com o rotulo
+    # "statements" e fechava mesmo quando um statement nao gerava aresta
+    # nenhuma, exatamente o buraco que deixou o SQL dinamico de
+    # RUN_DYNAMIC sumir sem erro). `stmt_type` (correcao do DEFEITO
+    # BLOQUEANTE seguinte, ver procgraph_access.py secao 5) e o que
+    # permite `CoverageError` nomear o tipo desconhecido na mensagem
+    # quando um statement lido fica mesmo assim sem nenhuma aresta
+    # correspondente. Populado por `_ProcGraphEngine.to_result()`; default
+    # vazio preserva compatibilidade com `ProcGraphResult(...)` construido
+    # a mao nos testes existentes (mesmo padrao de `needs_recompile`/
+    # `stats` acima).
+    statements_read: List[Tuple[str, int, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -655,12 +660,13 @@ class _ProcGraphEngine:
         self.not_expanded: List[str] = []
         self.blind_spots: List[str] = []
         self.needs_recompile: List[str] = []
-        # Correcao do DEFEITO 2 (COBERTURA, procgraph_render.py): um par
-        # (ref, line) por STMT de fato despachado a `_process_stmt` --
-        # denominador honesto para `build_coverage` provar que todo
-        # statement lido via PL/Scope tem pelo menos uma aresta
-        # correspondente (READ/WRITE/STATE_*/TRIGGER_FIRES/DYNAMIC_SQL).
-        self._statements_seen: List[Tuple[str, int]] = []
+        # Correcao do DEFEITO 2 (COBERTURA, procgraph_render.py): uma
+        # tripla (ref, line, stmt_type) por STMT de fato despachado a
+        # `_process_stmt` -- denominador honesto para `build_coverage`
+        # provar que todo statement lido via PL/Scope tem pelo menos uma
+        # aresta correspondente (READ/WRITE/STATE_*/TRIGGER_FIRES/
+        # DYNAMIC_SQL/NO_DATA_DEP).
+        self._statements_seen: List[Tuple[str, int, str]] = []
 
         self.truncated = False
         self.truncation_reason: Optional[str] = None
@@ -1217,9 +1223,18 @@ class _ProcGraphEngine:
             # provar (ou levantar CoverageError) que cada statement esta
             # representado. `assignment is None` e a varredura de estado
             # (entrega 2, statement=None) -- nunca um STMT de verdade,
-            # nunca entra aqui.
+            # nunca entra aqui. `assignment.target` (tipo do statement,
+            # mesmo campo que `procgraph_access._table_access_edges` le)
+            # vai junto -- correcao do DEFEITO BLOQUEANTE seguinte
+            # (procgraph_access.py secao 5): permite ao `CoverageError` de
+            # `build_coverage` nomear o tipo quando um statement lido
+            # fica sem nenhuma aresta correspondente.
             self._statements_seen.append(
-                (self._ref(owner, object_name, subprogram), assignment.line)
+                (
+                    self._ref(owner, object_name, subprogram),
+                    assignment.line,
+                    (assignment.target or "").upper(),
+                )
             )
 
         for edge in edges or []:
