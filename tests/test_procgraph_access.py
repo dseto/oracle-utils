@@ -413,6 +413,103 @@ def test_open_without_for_in_source_is_no_dependency():
     assert edges[0].op == "OPEN"
 
 
+def test_open_sharing_physical_line_with_prior_statement_is_still_dynamic():
+    # Regressao da 3a recorrencia da mesma classe de defeito (verificacao
+    # independente, rodada 3): PL/SQL permite mais de um statement na mesma
+    # linha FISICA, e `v_sql := '...' || p_x; OPEN c FOR v_sql;` e idioma
+    # comum. A versao anterior cortava no PRIMEIRO ";" da linha inteira --
+    # o ";" do statement ANTERIOR -- e "provava" estatico um ref cursor
+    # dinamico, que sumia de PONTOS CEGOS como NO_DATA_DEP. A varredura
+    # agora ancora no token OPEN, entao o ";" procurado e o que fecha o
+    # proprio OPEN.
+    statement = Assignment(
+        usage_id=3, line=42, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {42: "v_sql := 'SELECT 1 FROM dual WHERE x = ' || p_id; OPEN c FOR v_sql;\n"}
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+
+
+def test_open_static_sharing_physical_line_with_prior_statement_stays_static():
+    # Contraparte do caso acima: OPEN ESTATICO dividindo a linha com outro
+    # statement continua provavel como estatico -- a ancora no token OPEN
+    # nao pode transformar todo OPEN em linha compartilhada num falso
+    # dinamico (isso inverteria o defeito em vez de corrigi-lo).
+    statement = Assignment(
+        usage_id=3, line=42, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {42: "v_total := v_total + 1; OPEN cur_pedidos;\n"}
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "NO_DATA_DEP"
+
+
+def test_open_line_without_open_token_is_indecidable_hence_dynamic():
+    # Linha reportada pelo PL/Scope sem nenhum token OPEN no texto (fonte
+    # divergente da posicao reportada) -- indecidivel, desempate manda
+    # DINAMICO, nunca NO_DATA_DEP.
+    statement = Assignment(
+        usage_id=3, line=42, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {42: "v_total := v_total + 1;\n"}
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+
+
+def test_open_multiline_for_after_shared_first_line_is_dynamic():
+    # OPEN dinamico multi-linha CUJA primeira linha e compartilhada:
+    # `...; OPEN c FOR` na linha N e o SELECT na linha N+1. A ancora no
+    # OPEN + janela multi-linha precisam cooperar.
+    statement = Assignment(
+        usage_id=3, line=42, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {
+        42: "v_sql := v_sql || p_ord; OPEN c FOR\n",
+        43: "    v_sql;\n",
+    }
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+
+
 def test_open_without_source_capability_defaults_to_dynamic_opaque():
     # Cenario 3 (obrigatorio): fonte INDISPONIVEL -- regra de desempate,
     # indecidivel classifica DINAMICO (opaque), NUNCA NO_DATA_DEP. A

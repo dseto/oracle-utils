@@ -661,6 +661,41 @@ def test_builtin_calls_field_matches_stats_and_never_empty_for_length_call():
     assert length_node.is_builtin is True
 
 
+def test_builtin_classification_requires_resolve_owner_lookup():
+    # Achado nao-bloqueante da 3a verificacao independente: a classificacao
+    # de builtin e por NOME, e `owner_hint is None` pode significar
+    # "capacidade resolve_owner AUSENTE" em vez de "signature buscada e nao
+    # encontrada em nenhum owner de usuario". Sem a busca, um objeto do
+    # USUARIO chamado NVL/ROUND/LENGTH num owner nao coberto seria engolido
+    # pela lista de builtins -- sumindo da secao PONTOS CEGOS, que e a que
+    # exige olhar humano. O guard: sem `resolve_owner`, nome de builtin cai
+    # no ramo GENERICO de ponto cego (visivel), nunca em builtin_calls.
+    fixture = _load_fixture()
+    extractor = FakeExtractor(fixture)
+    # remove a capacidade: a classificacao nao pode mais "provar" builtin
+    if hasattr(type(extractor), "resolve_owner"):
+        extractor_cls = type(
+            "FakeExtractorSemResolveOwner",
+            (FakeExtractor,),
+            {"resolve_owner": property(doc="removida")},
+        )
+        # property sem getter levanta AttributeError no acesso -- hasattr
+        # devolve False, que e exatamente o contrato de "capacidade ausente"
+        extractor = extractor_cls(fixture)
+    assert not hasattr(extractor, "resolve_owner")
+
+    result = build_proc_graph(extractor, ("GESTAO", "FLOW_DEMO", "MAIN"))
+
+    # LENGTH continua no grafo (regra anti-omissao) -- mas como ponto cego
+    # generico, nao como builtin.
+    assert any("LENGTH" in spot for spot in result.blind_spots)
+    assert not any("LENGTH" in spot for spot in result.builtin_calls)
+    length_node = next(
+        n for n in result.nodes if n.grain == "unresolved" and n.subprogram == "LENGTH"
+    )
+    assert length_node.is_builtin is False
+
+
 # --------------------------------------------------------------------------
 # DEFEITO 4 (relatorio de verificacao independente, 2026-08-16): motivo
 # ausente no rebaixamento (objeto alcancado transitivamente pelo fallback

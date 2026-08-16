@@ -490,20 +490,49 @@ def _open_stmt_is_dynamic(
         return True
 
     by_line: Dict[int, str] = {row.line: (row.text or "") for row in source}
-    window_parts: List[str] = []
-    closed = False
-    for offset in range(_OPEN_SOURCE_WINDOW):
-        text = by_line.get(line + offset)
-        if text is None:
-            break
-        window_parts.append(text)
-        if ";" in text:
-            closed = True
-            break
 
-    if not window_parts or not closed:
-        # Linha ausente na fonte, ou statement nao fecha dentro da janela
-        # -- indecidivel, regra de desempate manda DINAMICO.
+    first_line = by_line.get(line)
+    if first_line is None:
+        # Linha ausente na fonte -- indecidivel, regra de desempate manda
+        # DINAMICO.
+        return True
+
+    # A varredura comeca no token OPEN, nao no inicio da linha fisica
+    # (correcao da 3a recorrencia da mesma classe de defeito, apontada por
+    # verificacao independente): PL/SQL permite mais de um statement na
+    # mesma linha fisica -- `v_sql := '...' || p_x; OPEN c FOR v_sql;` e
+    # idioma comum -- e cortar no PRIMEIRO ";" da linha inteira fazia o
+    # corte cair no statement ANTERIOR ao OPEN, "provando" estatico um ref
+    # cursor dinamico. Ancorar no OPEN garante que o ";" procurado e o que
+    # FECHA o proprio OPEN. Se houver mais de um OPEN na linha, usamos o
+    # ULTIMO cujo ";" de fechamento ainda esta a frente -- na duvida (OPEN
+    # nao encontrado como token, ex.: linha divergente da posicao que o
+    # PL/Scope reportou), indecidivel -> DINAMICO.
+    open_match = None
+    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_\$#]*", first_line):
+        if match.group(0).upper() == "OPEN":
+            open_match = match
+            # nao da break: statement do PL/Scope e o da linha `line`, e se
+            # ha dois OPEN na mesma linha o segundo tambem comeca ali --
+            # qualquer um sem FOR proprio cai no desempate dinamico abaixo,
+            # entao ancorar no ultimo e o mais conservador que ainda decide.
+    if open_match is None:
+        return True
+
+    window_parts = [first_line[open_match.start():]]
+    closed = ";" in window_parts[0]
+    if not closed:
+        for offset in range(1, _OPEN_SOURCE_WINDOW):
+            text = by_line.get(line + offset)
+            if text is None:
+                break
+            window_parts.append(text)
+            if ";" in text:
+                closed = True
+                break
+
+    if not closed:
+        # Statement nao fecha dentro da janela -- indecidivel, DINAMICO.
         return True
 
     before_semicolon = "".join(window_parts).split(";", 1)[0]

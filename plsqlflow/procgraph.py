@@ -1288,10 +1288,12 @@ class _ProcGraphEngine:
         resolved = resolve_call_target(call_row, self._definition_index)
         owner_hint: Optional[Tuple[str, str]] = None
         cap_blocked = False
+        owner_lookup_done = False
 
         if isinstance(resolved, UnresolvedCall) and assignment.signature and hasattr(
             self.extractor, "resolve_owner"
         ):
+            owner_lookup_done = True
             owner_hint = self.extractor.resolve_owner(assignment.signature)
             if owner_hint is not None:
                 # T-04: objeto ja coberto pelo fallback (grao objeto) por
@@ -1401,7 +1403,21 @@ class _ProcGraphEngine:
             )
         elif assignment.signature is None:
             reason = "CALL sem signature (destino indeterminavel estaticamente)"
-        elif (assignment.target or "").upper() in _SYS_STANDARD_BUILTIN_NAMES:
+        elif (
+            owner_lookup_done
+            and (assignment.target or "").upper() in _SYS_STANDARD_BUILTIN_NAMES
+        ):
+            # `owner_lookup_done` e requisito da classificacao (achado
+            # nao-bloqueante da 3a verificacao independente): "builtin" so
+            # quando `resolve_owner` EXISTE e foi consultado sem achar a
+            # signature em nenhum owner de usuario -- e o sinal que
+            # distingue "e o proprio SYS.STANDARD" de "e um objeto do
+            # usuario chamado NVL/ROUND/... num owner que a busca nao
+            # cobriu". Sem a capacidade, nao ha como distinguir, e o
+            # desempate segue a mesma assimetria de sempre: cai no ramo
+            # generico de ponto cego (visivel, exige olhar humano) em vez
+            # de ser engolido pela lista de builtins (invisivel na secao
+            # que importa).
             is_builtin = True
             reason = (
                 "builtin SYS.STANDARD ({}) -- semantica conhecida e documentada, nao "
