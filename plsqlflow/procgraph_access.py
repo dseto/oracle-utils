@@ -40,6 +40,37 @@ modulo la, secao "Seam de acesso"). Tres entregas do contrato:
    reconhece esse edge_type e enfileira o trigger no motor fino, para que
    o corpo dele tambem seja expandido (nao vira folha).
 
+4. SQL dinamico (correcao de DEFEITO 1, achado ao vivo contra o banco dev
+   -- `GESTAO.FLOW_DEMO.RUN_DYNAMIC`, dois `EXECUTE IMMEDIATE`): um STMT
+   cujo `target` (tipo do statement) e EXECUTE IMMEDIATE/OPEN ... FOR/
+   DBMS_SQL.PARSE (`_is_dynamic_stmt_type`, duplicado localmente do
+   equivalente privado `depgraph_enrich._looks_dynamic_stmt_type`, mesma
+   razao de duplicacao ja documentada acima) NAO cai mais no "fora de
+   escopo -> []" que a entrega 1 usa para SELECT/INSERT/UPDATE/DELETE/
+   MERGE. Em vez disso, `_dynamic_sql_edges` REUSA (nunca reimplementa)
+   `depgraph_enrich.dynamic_sql_findings`/`dynsql.resolve_dynamic_sql` --
+   a mesma classificacao resolved/partial/opaque que o modo OBJETO ja usa
+   -- e vira aresta `DYNAMIC_SQL` cujo `from_ref` e o SUBPROGRAMA exato
+   (`GESTAO.FLOW_DEMO.RUN_DYNAMIC`), nunca o objeto inteiro (diferenca
+   chave do modo objeto, onde `from_ref` e sempre `OWNER.OBJETO`).
+
+   `dynamic_sql_findings` precisa do TEXTO-FONTE (`Sequence[FetchSourceRow]`)
+   para montar o trecho e tentar resolver o literal -- capacidade que o
+   seam de T-03 nunca precisou antes (READ/WRITE/estado/trigger vem tudo
+   de PL/Scope, nunca do texto). `procgraph.ProcExtractor` ganhou um
+   metodo OPCIONAL novo, `source(owner, object_name)` (mesmo padrao
+   `hasattr` de `resolve_owner`/`object_wrapped`/`triggers`) -- quando
+   ausente (ou devolve vazio), o SQL dinamico NUNCA desaparece: vira
+   marcador `opaque` declarado (aresta + ponto cego, REGRA INEGOCIAVEL do
+   contrato), so com o motivo "sem fonte" em vez de tentar resolver.
+   `catalog_names` (nomes de objeto conhecidos, usados so pelo nivel
+   "partial" para achar candidato no fragmento irresolvivel) vem de
+   `dep_extractor.object_catalog` (Protocol de `depgraph.py`, JA usado
+   pelo fallback de grao objeto -- reusado aqui so como CONSULTA, mesmo
+   padrao de `extractor.triggers` na entrega 3); ausencia de
+   `dep_extractor` so degrada "partial" para "opaque" com mais frequencia
+   (nunca vira excecao, nunca omite).
+
 Duas FORMAS de chamada, ambas vindo do mesmo seam (`kwargs["statement"]`
 distingue -- ver `procgraph.py::_process_stmt`, que agora chama duas
 vezes por subprograma):
@@ -79,7 +110,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .depgraph_enrich import UNKNOWN_TARGET
+from .depgraph_enrich import UNKNOWN_TARGET, dynamic_sql_findings
 
 # Tipos de `statement`/`object_cache`/edges retornados sao deliberadamente
 # `Any` neste modulo (duck-typed, mesmo padrao ja usado por
@@ -305,6 +336,127 @@ def _discover_triggers(
     return edges
 
 
+def _is_dynamic_stmt_type(stmt_type: str) -> bool:
+    """Mesmo criterio de `depgraph_enrich._looks_dynamic_stmt_type`
+    (simbolo privado de outro modulo -- duplicado aqui em vez de
+    importado, mesma razao ja documentada na docstring do modulo):
+    EXECUTE IMMEDIATE exato, OPEN ... FOR (cursor dinamico, prefixo OPEN)
+    ou qualquer variante de DBMS_SQL.PARSE/.OPEN_CURSOR."""
+    upper = (stmt_type or "").upper().strip()
+    if upper == "EXECUTE IMMEDIATE":
+        return True
+    if upper.startswith("OPEN"):
+        return True
+    if "DBMS_SQL" in upper:
+        return True
+    return False
+
+
+def _catalog_names_for(owner: str, dep_extractor: Optional[Any]) -> List[str]:
+    """Nomes de objeto conhecidos do owner, usados so pelo nivel "partial"
+    de `dynamic_sql_findings` (candidato precisa bater com o catalogo).
+    `dep_extractor` e o Protocol `depgraph.DepExtractor` (o mesmo que o
+    fallback de grao objeto ja usa) -- CONSULTA pontual, nao motor;
+    ausencia (extractor None ou sem `object_catalog`) so degrada mais
+    achados para "opaque" em vez de "partial", nunca lanca nem omite."""
+    if dep_extractor is None or not hasattr(dep_extractor, "object_catalog"):
+        return []
+    try:
+        rows = dep_extractor.object_catalog(owner) or []
+    except Exception:
+        # Best-effort (mesma filosofia de `_discover_triggers` abaixo):
+        # falha na consulta de catalogo nunca derruba a travessia, so
+        # reduz a chance de um achado "partial" (cai para "opaque").
+        return []
+    return [row.object_name for row in rows if getattr(row, "object_name", None)]
+
+
+def _dynamic_sql_edges(
+    owner: str,
+    object_name: str,
+    subprogram: str,
+    statement: Any,
+    object_cache: Any,
+    extractor: Optional[Any],
+    dep_extractor: Optional[Any],
+    proc_edge_cls: Any,
+) -> List[Any]:
+    """DEFEITO 1 (achado ao vivo, banco dev): `GESTAO.FLOW_DEMO.
+    RUN_DYNAMIC` tem dois `EXECUTE IMMEDIATE` que sumiam sem rastro --
+    `_table_access_edges` devolvia `[]` para qualquer statement que nao
+    fosse SELECT/INSERT/UPDATE/DELETE/MERGE. REUSA (nunca reimplementa) a
+    classificacao resolved/partial/opaque de `depgraph_enrich.
+    dynamic_sql_findings`/`dynsql.resolve_dynamic_sql` -- a mesma que o
+    modo objeto ja usa -- so trocando o DONO da aresta: `from_ref` e o
+    SUBPROGRAMA exato (`_ref`), nunca o objeto inteiro.
+
+    REGRA INEGOCIAVEL (ver docstring do modulo): esta funcao SEMPRE
+    devolve pelo menos uma aresta DYNAMIC_SQL para a linha -- resolvida
+    (`confidence="exact"`), parcial (`confidence="partial"`, uma por
+    candidato) ou, na falta de capacidade/dado suficiente para tentar
+    resolver, um marcador `confidence="opaque"` com
+    `to_ref=UNKNOWN_TARGET`. Nunca devolve `[]` para uma linha que o
+    proprio PL/Scope ja marcou como statement dinamico -- e exatamente
+    essa omissao que o Defeito 1 provou em producao."""
+    from_ref = _ref(owner, object_name, subprogram)
+    line = getattr(statement, "line", None)
+    opaque = [
+        proc_edge_cls(
+            from_ref=from_ref,
+            to_ref=UNKNOWN_TARGET,
+            edge_type="DYNAMIC_SQL",
+            line=line,
+            confidence="opaque",
+        )
+    ]
+
+    if extractor is None or not hasattr(extractor, "source"):
+        # Capacidade OPCIONAL ausente no extractor (secao COBERTURA de
+        # procgraph_render.py declara isso "em alto e bom som", nao so em
+        # log) -- sem texto-fonte nao ha como tentar resolver NEM montar o
+        # trecho da entrega parcial; o achado ainda tem que aparecer,
+        # entao vira opaque declarado, nunca some.
+        return opaque
+
+    try:
+        source = list(extractor.source(owner, object_name) or [])
+    except Exception:
+        # Fonte e best-effort (mesma filosofia de `_discover_triggers`):
+        # falha na consulta nunca derruba a travessia inteira -- so esta
+        # linha cai para opaque.
+        source = []
+
+    if not source:
+        return opaque
+
+    statements = list(getattr(object_cache, "body_statements", None) or [])
+    catalog_names = _catalog_names_for(owner, dep_extractor)
+    findings = dynamic_sql_findings(statements, source, catalog_names, owner, object_name)
+
+    matches = [f for f in findings if f.line == line]
+    if not matches:
+        # Defensivo: `dynamic_sql_findings` classifica toda linha que
+        # `detect_dynamic_lines` (PL/Scope + fonte) acha; se a linha deste
+        # STMT (que o proprio PL/Scope ja marcou dinamico) nao aparecer
+        # entre os achados, nao inventamos resolucao -- ainda declara
+        # opaque em vez de sumir.
+        return opaque
+
+    edges: List[Any] = []
+    for finding in matches:
+        for dep_edge in finding.edges:
+            edges.append(
+                proc_edge_cls(
+                    from_ref=from_ref,
+                    to_ref=dep_edge.to_ref,
+                    edge_type="DYNAMIC_SQL",
+                    line=dep_edge.line,
+                    confidence=dep_edge.confidence,
+                )
+            )
+    return edges
+
+
 def _table_access_edges(
     owner: str,
     object_name: str,
@@ -312,15 +464,26 @@ def _table_access_edges(
     statement: Any,
     object_cache: Any,
     extractor: Optional[Any],
+    dep_extractor: Optional[Any],
     proc_edge_cls: Any,
 ) -> List[Any]:
     stmt_type = (getattr(statement, "target", None) or "").upper()
+
+    if _is_dynamic_stmt_type(stmt_type):
+        return _dynamic_sql_edges(
+            owner, object_name, subprogram, statement, object_cache, extractor, dep_extractor, proc_edge_cls
+        )
+
     if stmt_type not in _READ_STMT_TYPES and stmt_type not in _WRITE_STMT_TYPES:
-        # SQL dinamico (EXECUTE IMMEDIATE/OPEN FOR) e qualquer outro tipo
-        # de statement ficam fora do escopo de T-05 (classificacao de SQL
-        # dinamico em grao granular nao e uma das 3 entregas deste
-        # contrato) -- mesma fronteira que `depgraph_enrich.
-        # table_edges_from_statements` ja usa no modo nao-granular.
+        # Qualquer outro tipo de statement (ex.: COMMIT/ROLLBACK/LOCK
+        # TABLE/FETCH/CLOSE de cursor estatico) fica fora das 4 entregas
+        # deste seam -- mesma fronteira que `depgraph_enrich.
+        # table_edges_from_statements` ja usa no modo nao-granular. Isto
+        # devolve `[]` deliberadamente: a reconciliacao de COBERTURA
+        # (procgraph_render.py, defeito 2) e quem PROVA que nenhum
+        # statement lido fica sem representacao -- se este tipo aparecer
+        # na pratica, ela quebra alto (CoverageError) em vez de deixar o
+        # gap passar batido, mesma filosofia que pegou o Defeito 1.
         return []
 
     children = _statement_children(statement, object_cache)
@@ -382,11 +545,17 @@ def expand_access(
     statement: Optional[Any] = None,
     object_cache: Any = None,
     extractor: Optional[Any] = None,
+    dep_extractor: Optional[Any] = None,
     **_ignored: Any,
 ) -> List[Any]:
     """Seam consumido por `plsqlflow/procgraph.py::_ProcGraphEngine.
     _process_stmt`. Ver docstring do modulo para as duas formas de
-    chamada (por statement vs por subprograma) e as tres entregas.
+    chamada (por statement vs por subprograma) e as quatro entregas.
+
+    `dep_extractor` (entrega 4, SQL dinamico): Protocol `depgraph.
+    DepExtractor`, repassado pelo motor SO para `_catalog_names_for` (nivel
+    "partial" de `dynamic_sql_findings`) -- `None` e valido (degrada para
+    mais "opaque", nunca lanca).
 
     `**_ignored` absorve kwargs futuros que `procgraph.py` venha a
     acrescentar sem quebrar esta assinatura -- mesma tolerancia que um
@@ -397,7 +566,7 @@ def expand_access(
         edges = _state_edges(owner, object_name, subprogram, object_cache, ProcEdge)
     elif getattr(statement, "kind", None) == "STMT":
         edges = _table_access_edges(
-            owner, object_name, subprogram, statement, object_cache, extractor, ProcEdge
+            owner, object_name, subprogram, statement, object_cache, extractor, dep_extractor, ProcEdge
         )
     else:
         # CALL-kind Assignment nunca deveria chegar aqui (procgraph.py so

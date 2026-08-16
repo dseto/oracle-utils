@@ -20,11 +20,12 @@ SECAO 6 DO PLANO -- COBERTURA E OBRIGACAO DE PROVA, NAO RELATORIO
 
 `build_coverage` roda ANTES de qualquer escrita em disco (`render_graph`
 chama primeiro, mkdir/escrita so depois) e LEVANTA `CoverageError` -- nunca
-"conserta" um contador -- quando uma das tres somas do plano nao fecha:
+"conserta" um contador -- quando uma das QUATRO somas nao fecha:
 
     objetos alcancados = grao subprograma + grao objeto (por motivo) + folhas de fronteira
-    calls por objeto   = atribuidos a subprograma + atribuidos a __INIT__/__SPEC__ + nao atribuidos
-    statements idem
+    calls por objeto    = atribuidas a subprograma + atribuidas a __INIT__/__SPEC__ + nao atribuidas (arestas)
+    statements lidos    = atribuidos a subprograma + atribuidos a __INIT__/__SPEC__ (cada um com aresta ou ponto cego)
+    statements malformados = nenhuma aresta nao-CALL com from_ref fora do formato esperado
 
 Decisao de projeto registrada (a soma tem que poder QUEBRAR de verdade, senao
 o teste que prova "levanta excecao" seria vazio):
@@ -46,9 +47,9 @@ o teste que prova "levanta excecao" seria vazio):
   chamados de lugares diferentes) -- por isso o balde 3 e contado por NO,
   nao por par (owner,objeto), e nao existe um numero "objetos distintos"
   informativo para ele).
-- "calls"/"statements": classificados pela FORMA do `from_ref` de cada
-  aresta (nunca pelo `to_ref` -- ver "IDENTIDADE DE NO PARA RENDER" abaixo
-  para o motivo de `to_ref`/refs de no nao serem confiaveis para este fim).
+- "calls": classificadas pela FORMA do `from_ref` de cada aresta CALL
+  (nunca pelo `to_ref` -- ver "IDENTIDADE DE NO PARA RENDER" abaixo para o
+  motivo de `to_ref`/refs de no nao serem confiaveis para este fim).
   `from_ref` de aresta E SEMPRE `OWNER.OBJETO.SUBPROGRAMA[...]` (3+
   segmentos, gerado por `_ProcGraphEngine._ref`) OU `OWNER.OBJETO` (2
   segmentos, arestas copiadas do fallback via `_sync_fallback_results`) --
@@ -59,10 +60,32 @@ o teste que prova "levanta excecao" seria vazio):
   -> "atribuido a subprograma". Um `from_ref` com MENOS de 2 segmentos
   (malformado) cai fora dos tres baldes -- e o gatilho de quebra usado pelo
   teste de "soma nao fecha".
-  `edge_type == "CALL"` alimenta a linha "calls"; qualquer OUTRO edge_type
-  (READ/WRITE/STATE_READ/STATE_WRITE/TRIGGER_FIRES, e o que mais o merge do
-  fallback trouxer -- SYNONYM_RESOLVES_TO/DYNAMIC_SQL) alimenta a linha
-  "statements" -- e a fronteira natural entre "isto e uma chamada" e "isto e
+- "statements" (DEFEITO 2, achado ao vivo: o rotulo antigo dizia
+  "statements" mas somava ARESTAS -- um statement que nao gerava aresta
+  NENHUMA nunca entrava na conta, a soma fechava e a COBERTURA declarava
+  consistencia enquanto o SQL dinamico de RUN_DYNAMIC sumia sem rastro,
+  DEFEITO 1). O denominador agora e HONESTO: `ProcGraphResult.
+  statements_read`, uma lista de `(from_ref, line)` -- um par por STMT que
+  `_ProcGraphEngine._process_stmt` de fato despachou ao seam de acesso
+  (T-05), gravado ANTES de saber se produziu aresta. `_reconcile_statements_
+  read` confere que TODO par tem pelo menos uma aresta nao-CALL com o
+  MESMO `(from_ref, line)` -- resolvida (READ/WRITE/STATE_*/TRIGGER_FIRES)
+  ou marcadora (DYNAMIC_SQL partial/opaque, que `_dynamic_sql_edges` SEMPRE
+  emite, nunca omite). Par sem nenhuma aresta correspondente e a omissao
+  silenciosa que este defeito existe para impedir -- levanta `CoverageError`
+  imediatamente, nunca "fecha" trivialmente so porque a soma de zero e zero.
+  So cobre grao SUBPROGRAMA (`statements_read` so existe onde PL/Scope foi
+  lido por statement); o balde de grao OBJETO (fallback, sem PL/Scope para
+  atribuir por statement) continua contado por ARESTA -- `_reconcile_edges`
+  ainda roda sobre as arestas nao-CALL (agora so para validar refs
+  malformadas + contar o balde "objeto"), e o rotulo impresso para essa
+  fatia diz "arestas" explicitamente, nunca "statements" (a licao literal
+  do defeito: rotulo que promete uma coisa e soma outra e o mesmo tipo de
+  omissao que este contrato existe para impedir).
+  `edge_type == "CALL"` alimenta a reconciliacao de calls; qualquer OUTRO
+  edge_type (READ/WRITE/STATE_READ/STATE_WRITE/TRIGGER_FIRES/DYNAMIC_SQL, e
+  o que mais o merge do fallback trouxer -- SYNONYM_RESOLVES_TO) alimenta a
+  de statements -- fronteira natural entre "isto e uma chamada" e "isto e
   um efeito de um comando/estado", coerente com T-01 (CALL vs STMT).
 
 ============================================================================
@@ -154,12 +177,13 @@ _TABLE_EDGE_TYPES = ("READ", "WRITE")
 _STATE_EDGE_TYPES = ("STATE_READ", "STATE_WRITE")
 _TRIGGER_EDGE_TYPE = "TRIGGER_FIRES"
 
-_CAPABILITY_NAMES = ("resolve_owner", "object_wrapped", "triggers")
+_CAPABILITY_NAMES = ("resolve_owner", "object_wrapped", "triggers", "source")
 
 _CAPABILITY_LABELS = {
     "resolve_owner": "resolve_owner (resolucao de CALL inter-package por signature)",
     "object_wrapped": "object_wrapped (deteccao de objeto PL/SQL wrapped)",
     "triggers": "triggers (descoberta de trigger de tabela escrita)",
+    "source": "source (texto-fonte para resolver/classificar SQL dinamico)",
 }
 
 _CAPABILITY_ABSENT_WARNING = {
@@ -177,6 +201,12 @@ _CAPABILITY_ABSENT_WARNING = {
         "tabela escrita nunca gera aresta TRIGGER_FIRES -- trigger disparado pela escrita "
         "fica fora do mapa (gap declarado aqui, nao silencioso: nenhum trigger aparece em "
         "nenhum no deste grafo)."
+    ),
+    "source": (
+        "SQL dinamico (EXECUTE IMMEDIATE/OPEN ... FOR/DBMS_SQL.PARSE) nunca resolve nem "
+        "classifica 'partial' sem o texto-fonte -- toda ocorrencia cai em 'opaque' "
+        "declarada (aresta marcadora + PONTOS CEGOS, nunca omitida), mas o mapa fica mais "
+        "raso do que o processo real."
     ),
 }
 
@@ -246,10 +276,18 @@ class CoverageReport:
     calls_subprogram: int
     calls_init_spec: int
     calls_unattributed: int
-    statements_total: int
-    statements_subprogram: int
-    statements_init_spec: int
-    statements_unattributed: int
+    # Statements LIDOS (denominador honesto, ver docstring do modulo,
+    # secao 6 -- DEFEITO 2): so grao subprograma, cada um ja PROVADO
+    # representado por `build_coverage` (senao teria levantado
+    # `CoverageError` antes de chegar aqui).
+    statements_read_subprogram: int
+    statements_read_init_spec: int
+    statements_read_total: int
+    # Arestas nao-CALL em grao objeto (fallback, sem PL/Scope para
+    # atribuir por statement) -- rotulo deliberadamente "arestas", nunca
+    # "statements" (a licao do defeito: nao contar aresta e chamar de
+    # statement).
+    statements_edges_object: int
     objects_subprogram: int
     objects_object: int
     reasons: List[str] = field(default_factory=list)
@@ -300,13 +338,48 @@ def _reconcile_edges(edges: Sequence[ProcEdge], label: str) -> Dict[str, int]:
     return counts
 
 
+def _reconcile_statements_read(
+    statements_read: Sequence[Tuple[str, int]], edges: Sequence[ProcEdge]
+) -> Tuple[int, int, List[str]]:
+    """Denominador HONESTO da secao "statements" (DEFEITO 2, ver docstring
+    do modulo secao 6): `statements_read` vem de `_ProcGraphEngine.
+    _process_stmt` -- um par `(from_ref, line)` por STMT de fato
+    despachado ao seam de acesso, gravado ANTES de saber se produziu
+    aresta. Cada par precisa bater com pelo menos uma aresta NAO-CALL no
+    MESMO `(from_ref, line)` -- resolvida (READ/WRITE/STATE_*/
+    TRIGGER_FIRES) ou marcadora (DYNAMIC_SQL partial/opaque, que
+    `procgraph_access._dynamic_sql_edges` SEMPRE emite, nunca omite).
+
+    Devolve `(count_subprogram, count_init_spec, missing)` -- `missing` e
+    a lista de statements SEM nenhuma aresta correspondente (a omissao
+    silenciosa que este defeito existe para impedir); `build_coverage` e
+    quem decide levantar `CoverageError` quando `missing` nao esta vazio
+    (esta funcao so reconcilia, nunca "conserta" o numero nem lanca)."""
+    represented = {(e.from_ref, e.line) for e in edges if e.edge_type != _CALL_EDGE_TYPE}
+    count_subprogram = 0
+    count_init_spec = 0
+    missing: List[str] = []
+    for ref, line in statements_read:
+        bucket = _classify_from_ref(ref)
+        if bucket is None or (ref, line) not in represented:
+            missing.append(
+                "{} L{}{}".format(ref, line, "" if bucket is not None else " (ref malformado)")
+            )
+            continue
+        if bucket == "init_spec":
+            count_init_spec += 1
+        else:
+            count_subprogram += 1
+    return count_subprogram, count_init_spec, missing
+
+
 def build_coverage(
     result: ProcGraphResult, capabilities: Optional[Dict[str, Optional[bool]]] = None
 ) -> CoverageReport:
     """Reconciliacao de contadores da secao 6 do plano. Levanta
     `CoverageError` (nunca "conserta" o numero) quando qualquer uma das
-    tres somas nao fecha -- ver docstring do modulo para o desenho exato de
-    cada balde. Chamada por `render_graph` ANTES de qualquer escrita em
+    QUATRO somas nao fecha -- ver docstring do modulo para o desenho exato
+    de cada balde. Chamada por `render_graph` ANTES de qualquer escrita em
     disco."""
     capabilities = dict(capabilities or {})
     nodes = result.nodes
@@ -341,7 +414,25 @@ def build_coverage(
     call_edges = [e for e in edges if e.edge_type == _CALL_EDGE_TYPE]
     stmt_edges = [e for e in edges if e.edge_type != _CALL_EDGE_TYPE]
     call_counts = _reconcile_edges(call_edges, "calls")
-    stmt_counts = _reconcile_edges(stmt_edges, "statements")
+    # Ainda roda sobre TODAS as arestas nao-CALL: valida from_ref malformado
+    # (mesma checagem de antes) e fornece o balde "objeto" (fallback, sem
+    # PL/Scope para atribuir por statement) -- so os baldes "subprograma"/
+    # "__INIT__/__SPEC__" desta chamada NAO alimentam mais o relatorio (ver
+    # `_reconcile_statements_read` abaixo para o denominador honesto).
+    stmt_edge_counts = _reconcile_edges(stmt_edges, "statements")
+
+    stmt_read_subprogram, stmt_read_init_spec, missing_statements = _reconcile_statements_read(
+        result.statements_read, edges
+    )
+    if missing_statements:
+        raise CoverageError(
+            "COBERTURA nao fecha (statements): {} statement(s) lido(s) via PL/Scope sem "
+            "nenhuma aresta correspondente (nem READ/WRITE/STATE_*/TRIGGER_FIRES/"
+            "DYNAMIC_SQL) -- denominador honesto vem de ProcGraphResult.statements_read; "
+            "omissao silenciosa: {}".format(
+                len(missing_statements), "; ".join(sorted(missing_statements))
+            )
+        )
 
     objects_subprogram = {(n.owner, n.object_name) for n in nodes if n.grain == "subprogram"}
     objects_object = {(n.owner, n.object_name) for n in nodes if n.grain == "object"}
@@ -366,10 +457,10 @@ def build_coverage(
         calls_subprogram=call_counts["subprogram"],
         calls_init_spec=call_counts["init_spec"],
         calls_unattributed=call_counts["object"],
-        statements_total=len(stmt_edges),
-        statements_subprogram=stmt_counts["subprogram"],
-        statements_init_spec=stmt_counts["init_spec"],
-        statements_unattributed=stmt_counts["object"],
+        statements_read_subprogram=stmt_read_subprogram,
+        statements_read_init_spec=stmt_read_init_spec,
+        statements_read_total=stmt_read_subprogram + stmt_read_init_spec,
+        statements_edges_object=stmt_edge_counts["object"],
         objects_subprogram=len(objects_subprogram),
         objects_object=len(objects_object),
         reasons=reasons,
@@ -380,11 +471,12 @@ def build_coverage(
 
 
 def capabilities_from_extractor(extractor: Any) -> Dict[str, bool]:
-    """`{"resolve_owner": bool, "object_wrapped": bool, "triggers": bool}`
-    via `hasattr` puro -- mesmo criterio de opcionalidade que
-    `procgraph.py`/`procgraph_access.py` usam para checar estes metodos em
-    tempo de execucao. Uso tipico: `meta_params["capabilities"] =
-    capabilities_from_extractor(extractor)` antes de chamar `render_graph`."""
+    """`{"resolve_owner": bool, "object_wrapped": bool, "triggers": bool,
+    "source": bool}` via `hasattr` puro -- mesmo criterio de opcionalidade
+    que `procgraph.py`/`procgraph_access.py` usam para checar estes
+    metodos em tempo de execucao. Uso tipico: `meta_params["capabilities"]
+    = capabilities_from_extractor(extractor)` antes de chamar
+    `render_graph`."""
     return {name: hasattr(extractor, name) for name in _CAPABILITY_NAMES}
 
 
@@ -433,13 +525,20 @@ def _coverage_lines(coverage: CoverageReport) -> List[str]:
         )
     )
     lines.append(
-        "statements por objeto = {} atribuidos a subprograma + {} atribuidos a "
-        "__INIT__/__SPEC__ + {} nao atribuidos (grao objeto) = {} arestas de "
-        "acesso/estado/trigger/SQL dinamico".format(
-            coverage.statements_subprogram,
-            coverage.statements_init_spec,
-            coverage.statements_unattributed,
-            coverage.statements_total,
+        "statements lidos (PL/Scope, denominador honesto) = {} atribuidos a subprograma + "
+        "{} atribuidos a __INIT__/__SPEC__ = {} statements -- cada um com pelo menos uma "
+        "aresta correspondente (READ/WRITE/STATE_*/TRIGGER_FIRES/DYNAMIC_SQL); statement "
+        "lido sem nenhuma aresta correspondente levanta CoverageError (nunca fecha em "
+        "silencio)".format(
+            coverage.statements_read_subprogram,
+            coverage.statements_read_init_spec,
+            coverage.statements_read_total,
+        )
+    )
+    lines.append(
+        "arestas de acesso/estado/trigger/SQL dinamico em grao objeto (fallback, sem "
+        "PL/Scope disponivel para atribuir por statement) = {} arestas".format(
+            coverage.statements_edges_object
         )
     )
     lines.append("")
@@ -595,6 +694,34 @@ def _render_trigger_lines(outbound: Sequence[ProcEdge], inbound: Sequence[ProcEd
     return lines
 
 
+def _render_dynsql_lines(outbound: Sequence[ProcEdge]) -> List[str]:
+    """Secao `## SQL Dinamico` do node .md -- equivalente granular do
+    `_render_dynsql_lines` de `depgraph_render.py`.
+
+    Existe porque sem ela o node .md MENTE por omissao. A aresta
+    DYNAMIC_SQL de nivel `exact` (literal resolvido) nao e ponto cego,
+    entao nao entra na secao PONTOS CEGOS do INDEX; e nao e READ/WRITE,
+    entao nao entra em `## Tabelas acessadas`. Sem esta secao ela existiria
+    APENAS em edges.jsonl, e quem lesse o arquivo do subprograma veria um
+    no aparentemente sem efeito nenhum -- foi exatamente o que a primeira
+    execucao ao vivo mostrou em GESTAO.FLOW_DEMO.RUN_DYNAMIC, que executa
+    dois EXECUTE IMMEDIATE e aparecia mudo.
+
+    O nivel (`confidence`: exact/partial/opaque) vai explicito na linha: e
+    a diferenca entre "este alvo esta provado" e "este alvo e um palpite
+    que alguem precisa conferir a mao antes de migrar".
+    """
+    entries = sorted(
+        (e for e in outbound if e.edge_type == "DYNAMIC_SQL"),
+        key=lambda e: (e.line if e.line is not None else -1, e.to_ref),
+    )
+    lines = []
+    for e in entries:
+        line_label = "L{}".format(e.line) if e.line is not None else "L?"
+        lines.append("- {} [{}] -> {}".format(line_label, e.confidence, e.to_ref))
+    return lines
+
+
 def render_node_md(node: ProcNode, ref: str, outbound: Sequence[ProcEdge], inbound: Sequence[ProcEdge]) -> str:
     lines: List[str] = ["# {}".format(ref), _format_metadata_line(node), ""]
 
@@ -604,6 +731,7 @@ def render_node_md(node: ProcNode, ref: str, outbound: Sequence[ProcEdge], inbou
         ("## Tabelas acessadas", _render_table_lines(outbound, inbound)),
         ("## Estado de package", _render_state_lines(outbound)),
         ("## Triggers ativados", _render_trigger_lines(outbound, inbound)),
+        ("## SQL Dinâmico", _render_dynsql_lines(outbound)),
     ]
     for title, content in sections:
         if not content:

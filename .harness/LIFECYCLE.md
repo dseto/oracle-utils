@@ -305,11 +305,38 @@ aprovado e só devolve o controle ao humano em estado retomável.
     `file:line` do teste que prova o critério, para o humano abrir e ler sem
     caçar. Além disso: o que ficou quebrado, se houver (passo 14).
 
-16. **Commit e push na branch do contrato.** O commit local (`git add`/`git
+16. **Commit e push na branch do contrato.**
+
+    **Antes do commit, PERGUNTE ao desenvolvedor sobre docs/CHANGELOG/versão
+    (contrato `setup-fail-closed-sem-init`, T-07).** A saída de `harness
+    finish` traz o campo `docs_version` — versão corrente do pacote
+    (`harness.__version__`), se o CHANGELOG tem entrada para ela, e se os
+    marcadores de versão da documentação estão coerentes. Esse campo é
+    puramente INFORMATIVO: nunca aparece em `blockers`, nunca muda o exit
+    code de `harness finish`. Três garantias, sempre:
+
+    - **Nunca fazer a atualização sozinho.** Editar CHANGELOG/versão/
+      marcadores sem perguntar primeiro responde por conta própria a uma
+      decisão que é do desenvolvedor.
+    - **Nunca pular a pergunta** — mesmo quando `docs_version` já veio
+      coerente, ou quando parece óbvio que não é o caso. Óbvio para o
+      agente não é consentimento do humano.
+    - **"Não" é resposta legítima.** Recusar a atualização não é pendência:
+      segue direto para o commit, sem ela.
+
+    Coerência com a convenção já vigente do projeto: o `chore` de
+    versão/CHANGELOG normalmente é feito pelo humano, direto na `main`, fora
+    do ciclo do harness. Esta pergunta não muda essa convenção — ela só
+    abre uma exceção OPCIONAL: se o desenvolvedor disser sim, a atualização
+    entra no MESMO commit da branch do contrato e é revisada no PR junto com
+    o resto da entrega; se disser não, o `chore` de versão/CHANGELOG segue
+    para depois, no terminal do humano, como sempre foi.
+
+    Respondida a pergunta (sim ou não), o commit local (`git add`/`git
     commit`) e o `git push` da branch do contrato acontecem sem pedir
-    autorização — mas NÃO incondicionalmente. As duas pré-condições abaixo
-    são o que substitui o antigo gate humano, e sem elas o agente para e
-    chama a pessoa:
+    autorização adicional — mas NÃO incondicionalmente. As duas
+    pré-condições abaixo são o que substitui o antigo gate humano, e sem
+    elas o agente para e chama a pessoa:
 
     - `harness finish` sai com `blockers: []` — o que já implica toda tarefa
       com `passes: true` e evidência cujo `files_hash` bate com o arquivo

@@ -8,7 +8,7 @@
     "tests/fixtures/procgraph_demo.json"
   ],
   "verify_cmd": "pytest tests/test_procgraph_bfs.py -q",
-  "recorded_at": "2026-08-16T01:13:37.320545+00:00",
+  "recorded_at": "2026-08-16T02:24:41.066239+00:00",
   "exit_code": 0,
-  "files_hash": "sha256:303c19e71aa7ac47c3a21369de2776fcc4b8327f72333fe36a241dc6fc9ef952"
+  "files_hash": "sha256:ebad71f0634079baf087742273d75c7035bc6d35d8a1c79891e2348730935cd3"
 }

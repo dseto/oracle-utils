@@ -37,7 +37,11 @@
     `harness blind verdict`. E apresentar o que será commitado — por feature,
     descrição funcional em linguagem natural do que mudou, e link `file:line`
     do teste que prova.
-16. Commit e push na branch do contrato, condicionados a `harness finish`
+16. Antes do commit, PERGUNTAR ao desenvolvedor se quer incluir a
+    atualização de docs/CHANGELOG/versão que `harness finish` reportou
+    (campo `docs_version` — informativo, nunca bloqueia); nunca fazer
+    sozinho, nunca pular a pergunta, "não" segue direto pro commit. Depois,
+    commit e push na branch do contrato, condicionados a `harness finish`
     com `blockers: []`. O PR é do humano: entregue o `harness pr-draft`.
 17. Deixar a working tree limpa.
 

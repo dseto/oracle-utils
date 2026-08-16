@@ -19,13 +19,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-from plsqlflow import depgraph_enrich
-from plsqlflow.attribute import Assignment, IdentifierRow, assign_context
+from plsqlflow import depgraph_enrich, extract
+from plsqlflow.attribute import Assignment, IdentifierRow, StatementRow, assign_context
 from plsqlflow.procgraph import ProcEdge, build_proc_graph
 from plsqlflow.procgraph_access import expand_access
+from tests.test_procgraph_bfs import FakeExtractor, _load_fixture
 
 REPO = Path(__file__).resolve().parent.parent
 FLOW_DEMO_FIXTURE = REPO / "tests" / "fixtures" / "plscope_tree.json"
+FLOW_DEMO_SOURCE_FIXTURE = REPO / "tests" / "fixtures" / "flow_demo_extract.json"
 
 
 def _load_flow_demo() -> Dict[str, Any]:
@@ -563,6 +565,246 @@ def test_trigger_cycle_between_two_tables_terminates_and_is_declared():
     # Cada trigger e visitado UMA vez so (visited-set) mesmo com o ciclo.
     assert extractor.id_calls["GESTAO.TRG1"] == 1
     assert extractor.id_calls["GESTAO.TRG2"] == 1
+
+
+# ------------------------------------------------------- entrega 4 (defeito 1)
+#
+# GESTAO.FLOW_DEMO.RUN_DYNAMIC tem DOIS EXECUTE IMMEDIATE reais (linhas 28
+# e 31, confirmados em ALL_STATEMENTS contra o banco dev: usage_id 30 e 33,
+# ambos usage_context_id=25=RUN_DYNAMIC). Antes desta correcao,
+# `_table_access_edges` devolvia `[]` para qualquer statement que nao fosse
+# SELECT/INSERT/UPDATE/DELETE/MERGE -- o SQL dinamico sumia sem aresta, sem
+# ponto cego, com o no saindo `leaf: sim`. Os testes abaixo prova que as
+# DUAS ocorrencias aparecem, sempre atribuidas a RUN_DYNAMIC (nunca a
+# MAIN), com a mesma classificacao que o modo objeto ja produz (L28
+# resolved/exact, L31 partial -> FLOW_DEMO_LOG).
+
+
+def _flow_demo_statements() -> List[StatementRow]:
+    fixture = _load_flow_demo()
+    return [
+        StatementRow(
+            usage_id=row["usage_id"],
+            usage_context_id=row["usage_context_id"],
+            line=row["line"],
+            stmt_type=row["stmt_type"],
+        )
+        for row in fixture["statements"]
+    ]
+
+
+def _flow_demo_cache_with_statements() -> SimpleNamespace:
+    fixture = _load_flow_demo()
+    return SimpleNamespace(
+        body_identifiers=_identifiers_from(fixture["identifiers"]),
+        body_type=fixture["object_type"],
+        body_statements=_flow_demo_statements(),
+    )
+
+
+def _flow_demo_source_rows() -> List[extract.FetchSourceRow]:
+    # Texto-fonte REAL de GESTAO.FLOW_DEMO (banco dev, T-01) -- mesma
+    # fixture que tests/test_depgraph_enrich*.py ja usa para o modo
+    # objeto, reaproveitada aqui para a comparacao "granular nao pode ser
+    # PIOR" ser honesta (mesmo fonte, mesmo resultado esperado).
+    payload = json.loads(FLOW_DEMO_SOURCE_FIXTURE.read_text(encoding="utf-8"))
+    lines = payload["fetch_source"]["PACKAGE BODY"]
+    return [extract.FetchSourceRow(type="PACKAGE BODY", line=i + 1, text=text) for i, text in enumerate(lines)]
+
+
+class _SourceExtractor:
+    """Fake minimo com SO a capacidade `source` (Protocol OPCIONAL de
+    `procgraph.ProcExtractor`, correcao do defeito 1)."""
+
+    def __init__(self, rows: List[extract.FetchSourceRow]) -> None:
+        self._rows = rows
+
+    def source(self, owner: str, object_name: str) -> List[extract.FetchSourceRow]:
+        return self._rows
+
+
+class _CatalogRow:
+    def __init__(self, object_name: str) -> None:
+        self.object_name = object_name
+
+
+class _CatalogDepExtractor:
+    """Fake minimo com SO `object_catalog` -- o unico metodo de
+    `depgraph.DepExtractor` que `_dynamic_sql_edges` consome (nivel
+    "partial")."""
+
+    def __init__(self, names: List[str]) -> None:
+        self._names = names
+
+    def object_catalog(self, owner: str) -> List[_CatalogRow]:
+        return [_CatalogRow(n) for n in self._names]
+
+
+def test_dynamic_sql_resolved_exact_edge_attributed_to_run_dynamic():
+    fixture = _load_flow_demo()
+    exec_l28 = _assignment_for(fixture, usage_id=30)
+    assert exec_l28.enclosing == "RUN_DYNAMIC"
+    assert exec_l28.kind == "STMT"
+    assert exec_l28.line == 28
+
+    edges = expand_access(
+        owner="GESTAO",
+        object_name="FLOW_DEMO",
+        subprogram="RUN_DYNAMIC",
+        statement=exec_l28,
+        object_cache=_flow_demo_cache_with_statements(),
+        extractor=_SourceExtractor(_flow_demo_source_rows()),
+        dep_extractor=_CatalogDepExtractor(["FLOW_DEMO_LOG"]),
+    )
+    dyn_edges = [e for e in edges if e.edge_type == "DYNAMIC_SQL"]
+    assert len(dyn_edges) == 1
+    edge = dyn_edges[0]
+    assert edge.from_ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
+    assert edge.to_ref == "GESTAO.FLOW_DEMO_LOG"
+    assert edge.confidence == "exact"
+    assert edge.line == 28
+
+
+def test_dynamic_sql_partial_edge_l31_points_to_flow_demo_log():
+    fixture = _load_flow_demo()
+    exec_l31 = _assignment_for(fixture, usage_id=33)
+    assert exec_l31.enclosing == "RUN_DYNAMIC"
+    assert exec_l31.line == 31
+
+    edges = expand_access(
+        owner="GESTAO",
+        object_name="FLOW_DEMO",
+        subprogram="RUN_DYNAMIC",
+        statement=exec_l31,
+        object_cache=_flow_demo_cache_with_statements(),
+        extractor=_SourceExtractor(_flow_demo_source_rows()),
+        dep_extractor=_CatalogDepExtractor(["FLOW_DEMO_LOG"]),
+    )
+    dyn_edges = [e for e in edges if e.edge_type == "DYNAMIC_SQL"]
+    assert len(dyn_edges) == 1
+    edge = dyn_edges[0]
+    assert edge.from_ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
+    assert edge.to_ref == "GESTAO.FLOW_DEMO_LOG"
+    assert edge.confidence == "partial"
+    assert edge.line == 31
+
+
+def test_dynamic_sql_without_source_capability_becomes_opaque_never_disappears():
+    # REGRA INEGOCIAVEL do contrato: sem a capacidade `source` no
+    # extractor, o SQL dinamico NUNCA some -- vira marcador opaque
+    # declarado.
+    fixture = _load_flow_demo()
+    exec_l28 = _assignment_for(fixture, usage_id=30)
+
+    edges = expand_access(
+        owner="GESTAO",
+        object_name="FLOW_DEMO",
+        subprogram="RUN_DYNAMIC",
+        statement=exec_l28,
+        object_cache=_flow_demo_cache_with_statements(),
+        extractor=None,
+    )
+    dyn_edges = [e for e in edges if e.edge_type == "DYNAMIC_SQL"]
+    assert len(dyn_edges) == 1
+    assert dyn_edges[0].confidence == "opaque"
+    assert dyn_edges[0].to_ref == depgraph_enrich.UNKNOWN_TARGET
+    assert dyn_edges[0].from_ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
+
+
+def test_dynamic_sql_without_extractor_at_all_still_becomes_opaque():
+    fixture = _load_flow_demo()
+    exec_l31 = _assignment_for(fixture, usage_id=33)
+
+    edges = expand_access(
+        owner="GESTAO",
+        object_name="FLOW_DEMO",
+        subprogram="RUN_DYNAMIC",
+        statement=exec_l31,
+        object_cache=_flow_demo_cache_with_statements(),
+    )
+    dyn_edges = [e for e in edges if e.edge_type == "DYNAMIC_SQL"]
+    assert len(dyn_edges) == 1
+    assert dyn_edges[0].confidence == "opaque"
+
+
+class FakeExtractorWithSource(FakeExtractor):
+    """Mesmo fake de tests/test_procgraph_bfs.py, com a capacidade
+    OPCIONAL `source` (defeito 1: SQL dinamico so resolve/classifica
+    quando o extractor oferece texto-fonte)."""
+
+    def __init__(self, fixture: Dict[str, Any], source_by_ref: Dict[str, List[Any]]) -> None:
+        super().__init__(fixture)
+        self._source_by_ref = source_by_ref
+
+    def source(self, owner: str, object_name: str) -> List[Any]:
+        return self._source_by_ref.get(self._ref(owner, object_name), [])
+
+
+def _flow_demo_source_by_ref() -> Dict[str, List[Any]]:
+    return {"GESTAO.FLOW_DEMO": _flow_demo_source_rows()}
+
+
+def test_build_proc_graph_attributes_both_dynamic_sql_lines_to_run_dynamic_never_main():
+    # Integracao completa (motor real T-03 + seam T-05): as DUAS
+    # ocorrencias de SQL dinamico de RUN_DYNAMIC tem que aparecer no
+    # resultado de `build_proc_graph`, atribuidas ao subprograma exato --
+    # nunca a MAIN (que so CHAMA run_dynamic, nunca contem SQL dinamico
+    # nenhum).
+    fixture = _load_fixture()  # tests/fixtures/procgraph_demo.json (T-03)
+    extractor = FakeExtractorWithSource(fixture, _flow_demo_source_by_ref())
+    dep_extractor = _CatalogDepExtractor(["FLOW_DEMO_LOG", "FLOW_DEMO_AUDIT"])
+
+    result = build_proc_graph(extractor, ("GESTAO", "FLOW_DEMO", "MAIN"), dep_extractor=dep_extractor)
+
+    dyn_edges = [e for e in result.edges if e.edge_type == "DYNAMIC_SQL"]
+    by_line = {e.line: e for e in dyn_edges}
+    assert set(by_line) == {28, 31}
+    assert all(e.from_ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC" for e in dyn_edges)
+    assert not any(e.from_ref == "GESTAO.FLOW_DEMO.MAIN" for e in dyn_edges)
+
+    assert by_line[28].confidence == "exact"
+    assert by_line[28].to_ref == "GESTAO.FLOW_DEMO_LOG"
+    assert by_line[31].confidence == "partial"
+    assert by_line[31].to_ref == "GESTAO.FLOW_DEMO_LOG"
+
+    # Criterio de aceite literal do modo objeto, aplicado ao granular:
+    # nenhuma ocorrencia de SQL dinamico fica sem finding.
+    assert len(dyn_edges) == 2
+
+    # RUN_DYNAMIC agora tem arestas de saida (nao sai mais totalmente sem
+    # rastro) -- is_leaf continua True (semantica inalterada: "nao chama
+    # nada", ver test_inter_package_chain_reaches_all_three_objects), mas
+    # o no ja nao fica sem NENHUMA aresta.
+    run_dynamic_node = next(n for n in result.nodes if n.subprogram == "RUN_DYNAMIC")
+    assert run_dynamic_node.is_leaf is True
+    run_dynamic_out = [e for e in result.edges if e.from_ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"]
+    assert len(run_dynamic_out) == 2
+
+    # L31 (irresolvivel) vira ponto cego declarado, mesmo formato do modo
+    # objeto ("GESTAO.FLOW_DEMO L31 [partial] -> GESTAO.FLOW_DEMO_LOG").
+    blind_text = " ".join(result.blind_spots)
+    assert "GESTAO.FLOW_DEMO.RUN_DYNAMIC" in blind_text
+    assert "L31" in blind_text
+    assert "[partial]" in blind_text
+    assert "GESTAO.FLOW_DEMO_LOG" in blind_text
+
+    # As duas assercoes negativas do contrato (test_procgraph_bfs.py)
+    # continuam validas aqui tambem: MAIN nunca chama LENGTH nem escreve
+    # em FLOW_DEMO_LOG.
+    main_edges = [e for e in result.edges if e.from_ref == "GESTAO.FLOW_DEMO.MAIN"]
+    assert not any("LENGTH" in e.to_ref for e in main_edges)
+    assert not any("FLOW_DEMO_LOG" in e.to_ref for e in main_edges)
+
+    # Cada ocorrencia real detectada tem exatamente uma entrada em
+    # statements_read (denominador honesto da COBERTURA, defeito 2) --
+    # ambas representadas por aresta.
+    run_dynamic_stmts = [
+        (ref, line) for ref, line in result.statements_read if ref == "GESTAO.FLOW_DEMO.RUN_DYNAMIC"
+    ]
+    assert sorted(run_dynamic_stmts) == [
+        ("GESTAO.FLOW_DEMO.RUN_DYNAMIC", 28),
+        ("GESTAO.FLOW_DEMO.RUN_DYNAMIC", 31),
+    ]
 
 
 # ------------------------------------------------------- determinismo

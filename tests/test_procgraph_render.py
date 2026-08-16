@@ -61,7 +61,7 @@ def _empty_result() -> ProcGraphResult:
     )
 
 
-FULL_CAPABILITIES = {"resolve_owner": True, "object_wrapped": True, "triggers": True}
+FULL_CAPABILITIES = {"resolve_owner": True, "object_wrapped": True, "triggers": True, "source": True}
 
 
 # --------------------------------------------------------------------------
@@ -76,10 +76,12 @@ def test_coverage_sums_close_on_golden_fixture():
 
     assert coverage.nodes_subprogram + coverage.nodes_object + coverage.nodes_unresolved == coverage.nodes_total
     assert coverage.calls_subprogram + coverage.calls_init_spec + coverage.calls_unattributed == coverage.calls_total
-    assert (
-        coverage.statements_subprogram + coverage.statements_init_spec + coverage.statements_unattributed
-        == coverage.statements_total
-    )
+    # Defeito 2: o denominador de "statements" agora e HONESTO (statements
+    # realmente lidos via PL/Scope, ver ProcGraphResult.statements_read) --
+    # a soma so fecha porque `build_coverage` ja PROVOU (ou teria levantado
+    # CoverageError) que cada statement lido tem aresta correspondente.
+    assert coverage.statements_read_subprogram + coverage.statements_read_init_spec == coverage.statements_read_total
+    assert coverage.statements_read_total == len(result.statements_read)
     assert coverage.nodes_total == len(result.nodes)
 
 
@@ -181,6 +183,93 @@ def test_render_graph_raises_and_writes_nothing_when_coverage_broken(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# DEFEITO 2: reconciliacao de statements tem que partir do denominador
+# honesto (statements_read), nunca de uma soma de arestas que fecha
+# trivialmente quando nao ha aresta nenhuma.
+# --------------------------------------------------------------------------
+
+
+def test_coverage_raises_when_a_read_statement_has_no_edge_at_all():
+    # Cenario construido a mao: um statement foi LIDO (entra em
+    # `statements_read`, o denominador honesto) mas nenhuma aresta
+    # corresponde a ele. A soma ANTIGA (edges) fechava aqui mesmo assim --
+    # `stmt_edges` esta vazia, 0 == 0 -- exatamente o buraco que deixou o
+    # SQL dinamico de RUN_DYNAMIC sumir sem erro (defeito 1). A soma NOVA
+    # tem que quebrar.
+    bogus = ProcGraphResult(
+        nodes=[ProcNode(owner="GESTAO", object_name="X", subprogram="P1", grain="subprogram")],
+        edges=[],
+        truncated=False,
+        truncation_reason=None,
+        not_expanded=[],
+        blind_spots=[],
+        needs_recompile=[],
+        stats={},
+        statements_read=[("GESTAO.X.P1", 5)],
+    )
+
+    with pytest.raises(CoverageError, match="statements"):
+        build_coverage(bogus, FULL_CAPABILITIES)
+
+
+def test_coverage_passes_when_the_only_edge_is_a_dynamic_sql_marker():
+    # Contraste direto com o teste acima: o MESMO statement lido, agora
+    # com a aresta marcadora que `_dynamic_sql_edges` sempre emite (mesmo
+    # em nivel opaque) -- a reconciliacao tem que fechar, prova de que a
+    # regra e "precisa de aresta", nao "precisa resolver 100%".
+    bogus = ProcGraphResult(
+        nodes=[ProcNode(owner="GESTAO", object_name="X", subprogram="P1", grain="subprogram")],
+        edges=[ProcEdge(from_ref="GESTAO.X.P1", to_ref="?", edge_type="DYNAMIC_SQL", line=5, confidence="opaque")],
+        truncated=False,
+        truncation_reason=None,
+        not_expanded=[],
+        blind_spots=["GESTAO.X.P1 L5 [opaque] -> ?"],
+        needs_recompile=[],
+        stats={},
+        statements_read=[("GESTAO.X.P1", 5)],
+    )
+
+    coverage = build_coverage(bogus, FULL_CAPABILITIES)
+    assert coverage.statements_read_subprogram == 1
+    assert coverage.statements_read_total == 1
+
+
+def test_render_graph_raises_and_writes_nothing_when_statement_unrepresented(tmp_path):
+    bogus = ProcGraphResult(
+        nodes=[ProcNode(owner="GESTAO", object_name="X", subprogram="P1", grain="subprogram")],
+        edges=[],
+        truncated=False,
+        truncation_reason=None,
+        not_expanded=[],
+        blind_spots=[],
+        needs_recompile=[],
+        stats={},
+        statements_read=[("GESTAO.X.P1", 5)],
+    )
+    out_dir = tmp_path / "broken-graph-statements"
+
+    with pytest.raises(CoverageError):
+        render_graph(bogus, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    assert not out_dir.exists()
+
+
+def test_coverage_label_calls_fallback_edges_arestas_not_statements(tmp_path):
+    # A licao literal do defeito: se uma fatia da linha continua contando
+    # arestas (grao objeto/fallback, sem PL/Scope para atribuir por
+    # statement), o rotulo tem que DIZER arestas -- nunca prometer
+    # "statements" e entregar contagem de aresta.
+    result = _fallback_result()
+    out_dir = tmp_path / "graph"
+
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+    assert "statements lidos (PL/Scope, denominador honesto)" in index_text
+    assert "arestas de acesso/estado/trigger/SQL dinamico em grao objeto" in index_text
+
+
+# --------------------------------------------------------------------------
 # capacidades opcionais ausentes -- degradacao declarada (item 3 do T-08)
 # --------------------------------------------------------------------------
 
@@ -199,6 +288,36 @@ def test_index_declares_missing_resolve_owner_explicitly(tmp_path):
     assert "resolve_owner" in index_text
     assert "AUSENTE" in index_text
     assert "podem NAO ter sido seguidas" in index_text
+
+
+def test_index_declares_missing_source_and_dynamic_sql_stays_opaque_blind_spot(tmp_path):
+    # Defeito 1 + item 3 do T-08 juntos: sem a capacidade `source`, o SQL
+    # dinamico de RUN_DYNAMIC (FakeExtractor de test_procgraph_bfs.py NAO
+    # implementa `source`) nunca desaparece -- vira `opaque` declarado, e
+    # a AUSENCIA da capacidade aparece "em alto e bom som" na COBERTURA
+    # (nao so em log).
+    result = _flow_demo_result()
+    out_dir = tmp_path / "graph"
+
+    render_graph(
+        result,
+        out_dir,
+        {"capabilities": {"resolve_owner": True, "object_wrapped": True, "triggers": True, "source": False}},
+    )
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+    assert "source (texto-fonte para resolver/classificar SQL dinamico): AUSENTE" in index_text
+    assert "cai em 'opaque' declarada" in index_text
+
+    edges_text = (out_dir / "edges.jsonl").read_text(encoding="utf-8")
+    dyn_payloads = [json.loads(line) for line in edges_text.splitlines() if json.loads(line)["edge_type"] == "DYNAMIC_SQL"]
+    assert len(dyn_payloads) == 2
+    assert all(p["confidence"] == "opaque" for p in dyn_payloads)
+    assert all(p["from_ref"] == "GESTAO.FLOW_DEMO.RUN_DYNAMIC" for p in dyn_payloads)
+
+    # Ponto cego declarado, nunca omitido.
+    assert "GESTAO.FLOW_DEMO.RUN_DYNAMIC" in index_text
+    assert "[opaque]" in index_text
 
 
 def test_index_declares_capabilities_not_informed(tmp_path):
@@ -228,11 +347,13 @@ def test_capabilities_from_extractor_reflects_hasattr():
         "resolve_owner": True,
         "object_wrapped": False,
         "triggers": False,
+        "source": False,
     }
     assert capabilities_from_extractor(FakeProcExtractor()) == {
         "resolve_owner": True,
         "object_wrapped": True,
         "triggers": False,
+        "source": False,
     }
 
 
@@ -313,6 +434,53 @@ def test_node_md_content_has_ref_header_and_outbound_calls(tmp_path):
     # MAIN nunca chama LENGTH nem escreve em FLOW_DEMO_LOG.
     assert "LENGTH" not in main_md
     assert "FLOW_DEMO_LOG" not in main_md
+
+
+def test_node_md_shows_dynamic_sql_including_the_exact_level(tmp_path):
+    """Regressao de omissao encontrada na execucao AO VIVO contra o dev.
+
+    RUN_DYNAMIC executa dois EXECUTE IMMEDIATE (L28 e L31 do FLOW_DEMO
+    real). A aresta DYNAMIC_SQL de nivel `exact` cai num vao: nao e ponto
+    cego (esta resolvida), entao fica fora da secao PONTOS CEGOS do INDEX;
+    e nao e READ/WRITE, entao fica fora de `## Tabelas acessadas`. Sem a
+    secao `## SQL Dinamico` no node .md ela existia SO em edges.jsonl, e o
+    arquivo do subprograma mostrava um no aparentemente sem efeito nenhum
+    -- mentira por omissao, no formato que uma pessoa de fato le para
+    planejar a migracao.
+
+    O nivel (exact/partial/opaque) precisa estar visivel na linha: e a
+    diferenca entre alvo provado e alvo que alguem tem que conferir a mao.
+    """
+    result = _flow_demo_result()
+    out_dir = tmp_path / "graph"
+
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    node_md = (out_dir / "nodes" / "GESTAO.FLOW_DEMO.RUN_DYNAMIC.md").read_text(encoding="utf-8")
+
+    assert "## SQL Dinâmico" in node_md
+    # as DUAS ocorrencias, nao so a que vira ponto cego
+    assert "L28" in node_md
+    assert "L31" in node_md
+
+    # Nivel explicito em toda ocorrencia. Aqui as duas saem `opaque` porque o
+    # FakeExtractor da fixture NAO oferece a capacidade `source` -- sem o
+    # texto-fonte nao da para resolver o literal nem casar candidato no
+    # catalogo. Isso e a garantia anti-omissao no seu caso mais duro: mesmo
+    # sem conseguir dizer PARA ONDE o SQL dinamico aponta, a ocorrencia
+    # continua no mapa, marcada, em vez de sumir. Com a capacidade presente
+    # os niveis sobem (a execucao real contra o dev da L28 [exact] e L31
+    # [partial]); a classificacao em si e coberta pelos testes dedicados de
+    # tests/test_procgraph_access.py.
+    for line in ("L28", "L31"):
+        assert any(
+            line in row and "[" in row and "]" in row
+            for row in node_md.splitlines()
+        ), "ocorrencia {} sem nivel de classificacao explicito".format(line)
+
+    # e continuam pertencendo a RUN_DYNAMIC, nunca a MAIN
+    main_md = (out_dir / "nodes" / "GESTAO.FLOW_DEMO.MAIN.md").read_text(encoding="utf-8")
+    assert "## SQL Dinâmico" not in main_md
 
 
 def test_edges_jsonl_has_one_line_per_edge_sorted(tmp_path):

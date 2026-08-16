@@ -396,6 +396,16 @@ class ProcGraphResult:
     blind_spots: List[str]
     needs_recompile: List[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    # Denominador honesto da reconciliacao de COBERTURA (correcao do
+    # DEFEITO 2, procgraph_render.build_coverage): um par (ref, line) por
+    # STMT de fato despachado a `_process_stmt` (nunca por aresta -- a
+    # soma antiga contava arestas com o rotulo "statements" e fechava
+    # mesmo quando um statement nao gerava aresta nenhuma, exatamente o
+    # buraco que deixou o SQL dinamico de RUN_DYNAMIC sumir sem erro).
+    # Populado por `_ProcGraphEngine.to_result()`; default vazio preserva
+    # compatibilidade com `ProcGraphResult(...)` construido a mao nos
+    # testes existentes (mesmo padrao de `needs_recompile`/`stats` acima).
+    statements_read: List[Tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -481,7 +491,17 @@ class ProcExtractor(Protocol):
     aqui, nao como motor); usado por `procgraph_access.expand_access` via
     o `extractor` repassado em `_process_stmt`. Quando ausente, tabela
     escrita nunca gera TRIGGER_FIRES (gap declarado, nao erro -- entrega 3
-    de T-05 fica inerte sem esta capacidade no extractor real do CLI)."""
+    de T-05 fica inerte sem esta capacidade no extractor real do CLI).
+
+    `source` (correcao de DEFEITO 1, contrato depgraph-granular) tambem e
+    OPCIONAL (mesmo padrao `hasattr`): espelha `depgraph.DepExtractor.
+    source` -- texto-fonte de ALL_SOURCE, usado por `procgraph_access.
+    expand_access` (via `_dynamic_sql_edges`) para tentar resolver/
+    classificar SQL dinamico (EXECUTE IMMEDIATE/OPEN ... FOR/DBMS_SQL.
+    PARSE) com `depgraph_enrich.dynamic_sql_findings`, reusado sem
+    alteracao. Quando ausente, SQL dinamico NUNCA desaparece do grafo --
+    vira marcador `opaque` declarado (aresta + ponto cego), so com o
+    motivo "sem fonte" em vez de tentar resolver."""
 
     def plscope_identifiers(self, owner: str, object_name: str) -> Sequence[Any]: ...
 
@@ -492,6 +512,8 @@ class ProcExtractor(Protocol):
     def object_wrapped(self, owner: str, object_name: str) -> bool: ...
 
     def triggers(self, owner: str, table_names: Sequence[str]) -> Sequence[Any]: ...
+
+    def source(self, owner: str, object_name: str) -> Sequence[Any]: ...
 
 
 # --------------------------------------------------------------------------
@@ -633,6 +655,12 @@ class _ProcGraphEngine:
         self.not_expanded: List[str] = []
         self.blind_spots: List[str] = []
         self.needs_recompile: List[str] = []
+        # Correcao do DEFEITO 2 (COBERTURA, procgraph_render.py): um par
+        # (ref, line) por STMT de fato despachado a `_process_stmt` --
+        # denominador honesto para `build_coverage` provar que todo
+        # statement lido via PL/Scope tem pelo menos uma aresta
+        # correspondente (READ/WRITE/STATE_*/TRIGGER_FIRES/DYNAMIC_SQL).
+        self._statements_seen: List[Tuple[str, int]] = []
 
         self.truncated = False
         self.truncation_reason: Optional[str] = None
@@ -1167,7 +1195,11 @@ class _ProcGraphEngine:
         # tabela escrita -- descoberta reusa o caminho de
         # `depgraph._DepGraphEngine.expand_triggers`, mas o destino aqui e
         # a FILA deste motor fino (enqueue de TRIGGER_FIRES abaixo), nao
-        # uma folha. Stub devolve [] ate T-05 existir.
+        # uma folha. `dep_extractor` repassado (entrega 4, SQL dinamico):
+        # `expand_access` usa `dep_extractor.object_catalog` (mesmo
+        # Protocol que o fallback de T-04 ja consome) so para achar
+        # candidato do nivel "partial" -- `None` degrada para "opaque" com
+        # mais frequencia, nunca lanca.
         edges = _expand_access(
             owner=owner,
             object_name=object_name,
@@ -1175,7 +1207,21 @@ class _ProcGraphEngine:
             statement=assignment,
             object_cache=cache,
             extractor=self.extractor,
+            dep_extractor=self.dep_extractor,
         )
+
+        if assignment is not None:
+            # Correcao do DEFEITO 2 (COBERTURA): registra o STMT como
+            # "lido" ANTES de saber se ele produziu aresta -- e o
+            # denominador honesto que `build_coverage` usa depois para
+            # provar (ou levantar CoverageError) que cada statement esta
+            # representado. `assignment is None` e a varredura de estado
+            # (entrega 2, statement=None) -- nunca um STMT de verdade,
+            # nunca entra aqui.
+            self._statements_seen.append(
+                (self._ref(owner, object_name, subprogram), assignment.line)
+            )
+
         for edge in edges or []:
             if not isinstance(edge, ProcEdge):
                 continue
@@ -1202,6 +1248,17 @@ class _ProcGraphEngine:
                 parts = edge.to_ref.split(".")
                 if len(parts) == 3:
                     self._enqueue_subprogram(parts[0], parts[1], parts[2], depth + 1)
+            elif edge.edge_type == "DYNAMIC_SQL" and edge.confidence in ("partial", "opaque"):
+                # Correcao do DEFEITO 1: SQL dinamico que nao resolveu
+                # 100% literal e ponto cego, nunca so uma aresta muda --
+                # mesmo formato de texto que o modo objeto ja usa
+                # (`depgraph_render._blind_spot_lines`, secao "SQL
+                # dinamico nao resolvido") para nao-regressao visual entre
+                # os dois modos.
+                line_label = "L{}".format(edge.line) if edge.line is not None else "L?"
+                self.blind_spots.append(
+                    "{} {} [{}] -> {}".format(edge.from_ref, line_label, edge.confidence, edge.to_ref)
+                )
 
     # ---- processamento de um subprograma desenfileirado ----
 
@@ -1361,6 +1418,7 @@ class _ProcGraphEngine:
             blind_spots=sorted(set(self.blind_spots)),
             needs_recompile=sorted(set(self.needs_recompile)),
             stats=stats,
+            statements_read=sorted(self._statements_seen),
         )
 
 

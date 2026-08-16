@@ -211,11 +211,12 @@ ORDER  BY s.line
 class ProcDbExtractor:
     """Extractor concreto do Protocol `procgraph.ProcExtractor` (T-08) sobre
     uma conexao de verdade -- usado pelo modo `depgraph --granular`.
-    Implementa os TRES metodos OPCIONAIS do Protocol (`resolve_owner`/
-    `object_wrapped`/`triggers`) porque a producao PRECISA deles: eles so
-    sao opcionais do ponto de vista do Protocol/dos testes (fakes podem
-    omitir e cair em degradacao declarada) -- o extractor real do CLI tem
-    que oferecer os tres, senao a travessia inter-package degrada
+    Implementa os QUATRO metodos OPCIONAIS do Protocol (`resolve_owner`/
+    `object_wrapped`/`triggers`/`source`) porque a producao PRECISA deles:
+    eles so sao opcionais do ponto de vista do Protocol/dos testes (fakes
+    podem omitir e cair em degradacao declarada) -- o extractor real do
+    CLI tem que oferecer os quatro, senao a travessia inter-package (ou a
+    classificacao de SQL dinamico, correcao do DEFEITO 1) degrada
     silenciosamente (ver docstring de plsqlflow/procgraph_render.py, secao
     "DEGRADACAO POR CAPACIDADE OPCIONAL AUSENTE").
 
@@ -296,6 +297,17 @@ class ProcDbExtractor:
             return []
         table_list = ",".join(sorted({n.upper() for n in table_names}))
         return extract.fetch_triggers_any_status(self._conn, owner, table_list)
+
+    def source(self, owner: str, object_name: str) -> List[extract.FetchSourceRow]:
+        """Correcao do DEFEITO 1 (contrato depgraph-granular): texto-fonte
+        de ALL_SOURCE para `procgraph_access._dynamic_sql_edges` tentar
+        resolver/classificar SQL dinamico via `depgraph_enrich.
+        dynamic_sql_findings` (reusado sem alteracao). Reusa
+        `extract.fetch_source` -- mesmo fetcher que `DbDepExtractor.source`
+        ja usa no modo objeto (sem filtro de `object_type`: PACKAGE e
+        PACKAGE BODY vem juntos, mesmo comportamento ja validado pelo modo
+        objeto contra o banco dev)."""
+        return extract.fetch_source(self._conn, owner, object_name)
 
 
 def _parse_target(target: str) -> RootTarget:
