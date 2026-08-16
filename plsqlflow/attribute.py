@@ -55,12 +55,19 @@ ORIGEM (a raiz da arvore, usage_context_id=0) decide.
   definicao, esse bloco. Pousa em `__INIT__`.
 - Objeto standalone (PROCEDURE/FUNCTION/TRIGGER): normalmente nunca cai
   neste fallback -- o proprio no raiz (usage_context_id=0) JA e uma
-  DEFINITION de PROCEDURE/FUNCTION, entao o walk o inclui e acha o
-  subprograma envolvente antes de chegar aqui (ver `_enclosing_chain`, que
-  processa o no de contexto 0 antes de parar). Se mesmo assim acontecer
-  (dado malformado/objeto de tipo inesperado), tratamos como `__INIT__` por
-  seguranca: mais provavel ser codigo executavel avulso do que declaracao de
-  spec.
+  DEFINITION de PROCEDURE/FUNCTION (ou, desde T-05, TRIGGER -- ver
+  `_SUBPROGRAM_TYPES`), entao o walk o inclui e acha o subprograma
+  envolvente antes de chegar aqui (ver `_enclosing_chain`, que processa o
+  no de contexto 0 antes de parar). CORRECAO (T-05, fato provado contra o
+  banco dev): a afirmacao original deste paragrafo -- "o no raiz JA e uma
+  DEFINITION de PROCEDURE/FUNCTION" -- e FALSA para TRIGGER: em
+  GESTAO.TRG_FLOW_DEMO_LOG a raiz tem type='TRIGGER'. E exatamente por
+  isso que `_SUBPROGRAM_TYPES` precisou incluir 'TRIGGER' explicitamente;
+  sem essa entrada, o walk NAO incluiria a raiz (chain vazia) e todo
+  statement do corpo do trigger cairia no fallback abaixo. Se mesmo assim
+  acontecer (dado malformado/objeto de tipo inesperado, ou tipo de raiz
+  fora de `_SUBPROGRAM_TYPES`), tratamos como `__INIT__` por seguranca:
+  mais provavel ser codigo executavel avulso do que declaracao de spec.
 """
 from __future__ import annotations
 
@@ -72,9 +79,18 @@ from typing import Dict, Iterable, List, Optional, Sequence, Union
 _SPEC_OBJECT_TYPES = {"PACKAGE", "TYPE"}
 
 # Tipos de identificador que contam como "subprograma" para efeito de walk
-# (regra 1). Deliberadamente so PROCEDURE/FUNCTION -- um TYPE method tambem
-# aparece como FUNCTION/PROCEDURE em ALL_IDENTIFIERS, entao ja esta coberto.
-_SUBPROGRAM_TYPES = ("PROCEDURE", "FUNCTION")
+# (regra 1). PROCEDURE/FUNCTION cobre TYPE method (que tambem aparece como
+# FUNCTION/PROCEDURE em ALL_IDENTIFIERS). TRIGGER entrou aqui por fato
+# provado contra o banco dev (contrato depgraph-granular, T-05): a raiz de
+# um TRIGGER standalone (GESTAO.TRG_FLOW_DEMO_LOG) tem DECLARATION/
+# DEFINITION com type='TRIGGER', NUNCA 'PROCEDURE'/'FUNCTION' -- sem esta
+# entrada, todo CALL/STMT dentro do corpo de um trigger cai no fallback
+# __INIT__ (regra 4) em vez de ficar atribuido ao proprio nome do trigger,
+# contradizendo o requisito de T-05 ("trigger entra na travessia como
+# subprograma, nao como folha"). Nao afeta PACKAGE/TYPE (nenhuma linha ali
+# tem type='TRIGGER') nem os testes existentes (nenhuma fixture anterior
+# usa object_type='TRIGGER').
+_SUBPROGRAM_TYPES = ("PROCEDURE", "FUNCTION", "TRIGGER")
 
 
 @dataclass(frozen=True)

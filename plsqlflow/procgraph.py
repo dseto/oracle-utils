@@ -109,6 +109,106 @@ existe, so nao ganha filhos), nunca mudam a logica de terminacao.
 Determinismo: nenhuma lista de saida depende de ordem de iteracao de
 set/dict -- `to_result()` ordena nos e arestas antes de devolver, mesmo
 padrao de `depgraph.py::_DepGraphEngine.to_result`.
+
+FALLBACK DE GRAO OBJETO (T-04, contrato depgraph-granular): quando a
+cadeia alcanca um objeto PL/SQL sem PL/Scope `IDENTIFIERS` utilizavel (ou
+*wrapped*), a atribuicao por subprograma e IMPOSSIVEL -- mas a travessia
+nunca para nem omite (docs/plano-depgraph-granular.md, secao 4,
+"Fallback de completude"). Este motor reusa `depgraph._DepGraphEngine`
+(fronteira/sinonimo/db_link/caps/catalogo, NAO duplicados aqui) para
+expandir esse objeto em grao OBJETO, e tudo que ele alcanca continua a
+travessia atraves dele.
+
+Dois pontos de entrada da fallback (`_fallback_reason` decide SE cabe,
+`_fallback_object_grain` executa):
+- `_process_call`: uma CALL que so resolve ate o OWNER/OBJETO (via
+  `resolve_owner`, ver secao "Resolucao inter-package" acima) mas cujo
+  objeto, uma vez carregado, nao tem identifiers utilizaveis. ANTES desta
+  tarefa isso virava um no `__UNRESOLVED__` sem saida -- exatamente o
+  buraco que o plano descreve (o objeto seguinte da cadeia, alcancavel so
+  via ALL_DEPENDENCIES a partir dali, sumia). Este e o caminho que a
+  cadeia A(fino)->B(sem PL/Scope)->C(fino) do teste percorre: a CALL de A
+  para B nunca resolve por signature (B nunca contribuiu nenhuma
+  DEFINITION para o indice, exatamente porque nao tem identifiers) --
+  so o `resolve_owner` pontual descobre que o alvo E B.
+- `_process_subprogram`: o objeto foi enfileirado DIRETO como alvo de
+  subprograma (raiz de 3 partes nomeando um subprograma de um objeto sem
+  PL/Scope -- unico jeito de chegar aqui sem passar por uma CALL
+  resolvida, ja que `ResolvedCall` exige DEFINITION indexada, que exige
+  identifiers). O no de 3 partes nunca chega a ser criado: identidade de
+  no em fallback e sempre de 2 partes (plano, secao "Identidade de no").
+
+TRADUCAO DE VISITED-SET (requisito duro do T-04, decisao de projeto
+registrada aqui): os dois motores chaveiam identidade de formas
+DIFERENTES -- o fino por (OWNER, OBJETO, SUBPROGRAMA), o de objeto
+(`_DepGraphEngine`) por (OWNER, OBJETO). Duas travessias em um so
+visited-set fisico nao funcionam (chaves de tamanhos diferentes), entao a
+integracao e uma TRADUCAO nos dois sentidos, cada um com seu proprio
+mecanismo:
+
+1. "fino ja tocou -> fallback nao retoca": `_ProcGraphEngine` mantem
+   `_subprogram_grain_objects: Set[(OWNER, OBJETO)]` -- a PROJECAO do
+   visited-set fino (que e por subprograma) para o espaco por objeto do
+   `_DepGraphEngine`. Um objeto entra ali assim que o motor fino
+   CONFIRMA que ele tem identifiers utilizaveis -- no ENQUEUE de uma
+   `ResolvedCall` (`_process_call`) e no auto-enqueue de `__INIT__`, ALEM
+   do ponto de confirmacao normal em `_process_subprogram` (rede de
+   seguranca para raiz direta). Marcar no ENQUEUE (nao so quando o
+   subprograma e de fato desenfileirado) fecha uma janela de corrida real
+   da BFS FIFO: um alvo resolvido entra no FIM da fila e so e processado
+   depois de itens que ja estao nela -- se um desses itens anteriores
+   disparar fallback ANTES do alvo ser desenfileirado, o fallback precisa
+   already saber que aquele objeto e territorio fino, mesmo sem o no
+   ainda existir (prova:
+   `test_fine_visited_object_not_reexpanded_by_fallback`, que controla a
+   ordem da fila de proposito para exercitar exatamente essa janela).
+   `_get_fallback_engine` sincroniza este set para dentro de
+   `_DepGraphEngine.visited` ANTES de cada enqueue/run (nao so na
+   criacao): o motor fino pode reclamar objetos novos entre um gatilho de
+   fallback e o proximo. `_DepGraphEngine.enqueue`/`_process_object` ja
+   no-opam sozinhos para qualquer chave presente em `visited` -- nenhuma
+   mudanca de comportamento la, so um visited-set pre-populado de fora
+   (mesmo mecanismo que `from_result` ja usa para reidratar estado).
+2. "fallback ja tocou -> fino nao retoca": todo objeto que o
+   `_DepGraphEngine` reusado processa vira um `ProcNode` de 2 partes
+   (`OWNER.OBJETO`) com `grain="object"` em `self.nodes`
+   (`_sync_fallback_results`). `_fallback_ref_if_covered` checa essa
+   chave ANTES de `_load_object` em `_process_call` E em
+   `_process_subprogram` -- se o objeto ja esta coberto, so uma aresta e
+   adicionada (`resolved=True`, sem CALL/STMT novos), nunca uma nova
+   chamada a `plscope_identifiers`/`plscope_statements` (prova:
+   `test_fallback_expanded_object_not_reprocessed_by_fine_engine`, que
+   conta chamadas no fake).
+
+Consequencia aceita (nao testada letra a letra, registrada aqui): quando
+uma aresta do `_DepGraphEngine` aponta para um objeto que e territorio
+fino (caso 1 acima), o alvo fica no ref de 2 partes (`OWNER.OBJETO`) em
+vez do ref de 3 partes de um subprograma especifico -- o motor de objeto
+GENUINAMENTE nao sabe qual subprograma esta sendo alcancado (so
+ALL_DEPENDENCIES, sem signature), entao apontar para um subprograma
+especifico seria inventar precisao que o dado nao sustenta. A aresta
+ainda fecha o ciclo/mostra a dependencia (ref de 2 partes E um prefixo
+legivel do objeto), so nao aponta para o no exato -- coerente com "grao
+objeto declarado onde o compilador nao prova" (plano, secao 4).
+
+Deteccao de *wrapped* (motivo distinto de "sem identifiers" exigido pelo
+T-04): metodo OPCIONAL `object_wrapped(owner, object_name) -> bool` no
+Protocol `ProcExtractor` (mesmo padrao `hasattr` de `resolve_owner`) --
+quando ausente, todo objeto sem identifiers cai no motivo generico "sem
+PL/Scope identifiers". A wiring real (consulta que decide *wrapped* --
+provavelmente inspecionar o texto de ALL_SOURCE em busca do marcador de
+`DBMS_DDL.WRAP`) fica para quem monta o extractor real do CLI (fora do
+escopo desta tarefa, que so cobre `plsqlflow/procgraph.py`); os testes
+deste modulo alimentam um fake que implementa o metodo diretamente.
+
+`dep_extractor` ausente (`None`, o default) mas fallback necessario: a
+regra "nunca omite em silencio" vale mesmo sem o extractor de objeto
+configurado -- em vez de lancar excecao (que mataria a travessia
+INTEIRA por um unico objeto problematico) ou fingir cobertura, o no de
+fallback e criado mesmo assim (`grain="object"`, `is_leaf=True`) com o
+motivo mais a ressalva de que o fallback nao pode expandir, e o gap
+entra em `not_expanded`/`blind_spots`/`truncated` -- declarado, nunca
+silencioso.
 """
 from __future__ import annotations
 
@@ -127,6 +227,7 @@ from typing import (
     Union,
 )
 
+from . import depgraph
 from .attribute import (
     Assignment,
     DefinitionEntry,
@@ -167,6 +268,15 @@ _SPEC_TYPES = {"PACKAGE", "TYPE"}
 # a "arvore" dele e a propria DEFINITION de raiz (usage_context_id=0).
 _STANDALONE_TYPES = {"PROCEDURE", "FUNCTION", "TRIGGER"}
 
+# T-04: `_DepGraphEngine.__init__` exige max_objects/max_depth como `int`
+# (o motor de objeto original sempre teve cap default numerico -- ver
+# depgraph.build_dep_graph). O motor fino usa `Optional[int]` (`None` =
+# sem cap, regra do modo granular). Quando o usuario nao passou cap
+# proprio para o motor fino, o fallback tambem roda sem cap PRATICO --
+# este sentinel e "grande o suficiente para nunca bater" sem precisar
+# ensinar `_DepGraphEngine` a entender `None`.
+_NO_CAP_SENTINEL = 2**31 - 1
+
 
 def _stub_expand_access(**kwargs: Any) -> List["ProcEdge"]:
     """Stub local do seam de T-05 (ver docstring do modulo). T-03 so
@@ -196,11 +306,15 @@ class ProcNode:
     NAO-RESOLVIDO/externo) do grafo de processo.
 
     `grain` e "subprogram" para todo no normal deste motor; T-04 usa
-    "object" para o fallback (objeto sem PL/Scope utilizavel expandido em
-    grao objeto inteiro -- ver `plsqlflow.depgraph._DepGraphEngine`
-    reusado la); este modulo so MARCA o ponto de decisao (ver
-    `_process_subprogram`, ramo `not cache.has_identifiers`) sem
-    implementar o fallback. `grain="unresolved"` e deste modulo: CALL cuja
+    "object" para o fallback (objeto sem PL/Scope utilizavel, ou
+    *wrapped*, expandido em grao objeto inteiro via
+    `plsqlflow.depgraph._DepGraphEngine` reusado -- ver
+    `_ProcGraphEngine._fallback_object_grain`/`_sync_fallback_results` e a
+    secao "FALLBACK DE GRAO OBJETO" da docstring do modulo). No de
+    fallback usa identidade de 2 partes (`OWNER.OBJETO`, plano secao
+    "Identidade de no") -- `subprogram=""` (nunca `None`: o campo do
+    dataclass e `str`) e o sentinel para "este no nao tem subprograma,
+    e o objeto inteiro". `grain="unresolved"` e deste modulo: CALL cuja
     signature nao resolveu (ver docstring, secao "Resolucao
     inter-package") -- nunca omitida, sempre um no declarado com o motivo
     em `note`.
@@ -228,16 +342,30 @@ class ProcEdge:
     `OWNER.OBJETO.SUBPROGRAMA` (mesmo formato do `ref` usado como chave em
     `ProcNode`). `resolved=False` marca aresta para um no NAO-RESOLVIDO
     (`reason` sempre preenchido nesse caso -- nunca aresta omitida por
-    falta de resolucao, regra dura do contrato)."""
+    falta de resolucao, regra dura do contrato).
+
+    `op`/`cols` (T-05, seam de acesso): mesma semantica de
+    `depgraph.DepEdge.op`/`.cols` -- `op` e o tipo do statement (INSERT/
+    UPDATE/DELETE/MERGE) para edge_type=WRITE, ou o evento (ex.:
+    'INSERT') para edge_type=TRIGGER_FIRES; `cols` e a lista de colunas
+    do COMPILADOR (PL/Scope, nunca regex), best-effort (None quando o
+    compilador nao entregou identificador COLUMN nenhum -- nunca lista
+    inventada). Para READ/WRITE, `to_ref` NAO e um subprograma (e uma ref
+    de tabela `OWNER.TABELA`, 2 partes); para TRIGGER_FIRES, `to_ref`
+    aponta para o trigger COMO subprograma (3 partes, mesmo formato de
+    `_ref`) -- e o que permite ao motor enfileira-lo em vez de trata-lo
+    como folha (ver `_ProcGraphEngine._process_stmt`)."""
 
     from_ref: str
     to_ref: str
-    edge_type: str  # "CALL" (T-03); STMT_* fica para o seam de T-05
+    edge_type: str  # "CALL" (T-03); READ/WRITE/STATE_*/TRIGGER_FIRES (T-05)
     line: Optional[int]
     signature: Optional[str] = None
     resolved: bool = True
     reason: Optional[str] = None
     confidence: str = "exact"
+    op: Optional[str] = None
+    cols: Optional[List[str]] = None
 
 
 @dataclass
@@ -249,7 +377,16 @@ class ProcGraphResult:
     `DepGraphResult`) enumera toda CALL que nao pode ser atribuida a
     nenhum destino conhecido (alvo fora do escopo visivel, ex.:
     SYS.STANDARD) -- distinto de `not_expanded`, que e sobre caps de
-    usuario, nao sobre alvo desconhecido."""
+    usuario, nao sobre alvo desconhecido.
+
+    `needs_recompile` (T-04): refs de objeto (`OWNER.OBJETO`, 2 partes)
+    que caem no fallback de grao objeto e sao recompilaveis para ganhar
+    PL/Scope completo -- espelha `depgraph.DepGraphResult.needs_recompile`
+    e vem DIRETO de la (`_DepGraphEngine` reusado ja calcula isso sozinho
+    em `_process_object`, nao reimplementado aqui): todo objeto de tipo
+    PL/SQL sem `IDENTIFIERS:ALL`+`STATEMENTS:ALL` completos entra aqui,
+    nao so o objeto raiz do gatilho de fallback mas qualquer outro
+    alcancado pelo mesmo caminho."""
 
     nodes: List[ProcNode]
     edges: List[ProcEdge]
@@ -257,6 +394,7 @@ class ProcGraphResult:
     truncation_reason: Optional[str]
     not_expanded: List[str]
     blind_spots: List[str]
+    needs_recompile: List[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
 
 
@@ -326,13 +464,34 @@ class ProcExtractor(Protocol):
     `resolve_owner` e OPCIONAL (mesmo padrao de `deps_direct_batch` em
     `depgraph.DepExtractor`: presenca checada via `hasattr` em runtime) --
     ver docstring do modulo, secao "Resolucao inter-package", para o
-    motivo de existir e a garantia que ele fecha."""
+    motivo de existir e a garantia que ele fecha.
+
+    `object_wrapped` (T-04) tambem e OPCIONAL (mesmo padrao `hasattr`):
+    devolve True quando o objeto e PL/SQL *wrapped* (fonte embaralhada
+    por `DBMS_DDL.WRAP`, PL/Scope nao consegue introspectar) -- motivo
+    distinto de "sem PL/Scope identifiers" no fallback de grao objeto
+    (ver docstring do modulo, secao "FALLBACK DE GRAO OBJETO"). Quando o
+    extractor nao implementa, todo objeto sem identifiers cai no motivo
+    generico.
+
+    `triggers` (T-05, seam de acesso) tambem e OPCIONAL (mesmo padrao
+    `hasattr`): espelha `depgraph.DepExtractor.triggers` -- descobre os
+    triggers de uma tabela escrita (mesmo caminho de
+    `depgraph._DepGraphEngine.expand_triggers`, reusado so como CONSULTA
+    aqui, nao como motor); usado por `procgraph_access.expand_access` via
+    o `extractor` repassado em `_process_stmt`. Quando ausente, tabela
+    escrita nunca gera TRIGGER_FIRES (gap declarado, nao erro -- entrega 3
+    de T-05 fica inerte sem esta capacidade no extractor real do CLI)."""
 
     def plscope_identifiers(self, owner: str, object_name: str) -> Sequence[Any]: ...
 
     def plscope_statements(self, owner: str, object_name: str) -> Sequence[Any]: ...
 
     def resolve_owner(self, signature: str) -> Optional[Tuple[str, str]]: ...
+
+    def object_wrapped(self, owner: str, object_name: str) -> bool: ...
+
+    def triggers(self, owner: str, table_names: Sequence[str]) -> Sequence[Any]: ...
 
 
 # --------------------------------------------------------------------------
@@ -455,6 +614,8 @@ class _ProcGraphEngine:
         extractor: ProcExtractor,
         max_objects: Optional[int],
         max_depth: Optional[int],
+        dep_extractor: Optional["depgraph.DepExtractor"] = None,
+        stop_schemas: Sequence[str] = ("SYS", "SYSTEM"),
     ) -> None:
         self.extractor = extractor
         self.max_objects = max_objects
@@ -471,6 +632,7 @@ class _ProcGraphEngine:
         self._edge_keys: Set[Tuple[str, str, str, Optional[int]]] = set()
         self.not_expanded: List[str] = []
         self.blind_spots: List[str] = []
+        self.needs_recompile: List[str] = []
 
         self.truncated = False
         self.truncation_reason: Optional[str] = None
@@ -478,6 +640,26 @@ class _ProcGraphEngine:
         self._object_cache: Dict[Tuple[str, str], _ObjectCache] = {}
         self._definition_index: Dict[str, DefinitionEntry] = {}
         self._init_enqueued: Set[Tuple[str, str]] = set()
+
+        # T-04: fallback de grao objeto (ver docstring do modulo, secao
+        # "FALLBACK DE GRAO OBJETO" e "TRADUCAO DE VISITED-SET").
+        # `dep_extractor` alimenta o `_DepGraphEngine` reusado -- None
+        # (default) e valido para qualquer travessia que nunca precisar
+        # do fallback (ex.: toda a suite de test_procgraph_bfs.py); so
+        # importa quando um objeto sem PL/Scope e de fato alcancado (ver
+        # `_fallback_object_grain`).
+        self.dep_extractor = dep_extractor
+        self.stop_schemas = tuple(stop_schemas)
+        self._fallback_engine: Optional["depgraph._DepGraphEngine"] = None
+        # Projecao do visited-set fino (OWNER, OBJETO, SUBPROGRAMA) para o
+        # espaco por objeto (OWNER, OBJETO) do `_DepGraphEngine` -- ver
+        # docstring do modulo, item 1 de "TRADUCAO DE VISITED-SET".
+        self._subprogram_grain_objects: Set[Tuple[str, str]] = set()
+        # Motivo (T-04) do gatilho de fallback, por objeto -- so para o no
+        # RAIZ do fallback (objetos alcancados transitivamente por
+        # ALL_DEPENDENCIES a partir dali carregam so o `note` que o
+        # proprio `_DepGraphEngine` ja calcula, ex.: fronteira/db_link).
+        self._fallback_root_reasons: Dict[Tuple[str, str], str] = {}
 
     # ---- utilitarios de baixo nivel (mesmo padrao de depgraph.py) ----
 
@@ -513,6 +695,166 @@ class _ProcGraphEngine:
     @staticmethod
     def _ref(owner: str, object_name: str, subprogram: str) -> str:
         return "{}.{}.{}".format(owner.upper(), object_name.upper(), subprogram)
+
+    # ---- T-04: fallback de grao objeto (ver docstring do modulo) ----
+
+    def _claim_subprogram_grain(self, owner: str, object_name: str) -> None:
+        """Marca (owner, objeto) como territorio do motor fino -- item 1
+        de "TRADUCAO DE VISITED-SET" na docstring do modulo. Chamado assim
+        que o motor fino CONFIRMA identifiers utilizaveis para o objeto
+        (ResolvedCall em `_process_call`, auto-enqueue de `__INIT__`, e o
+        proprio sucesso de `_process_subprogram`) -- nunca antes disso,
+        senao um objeto que ainda vai cair em fallback (raiz de 3 partes
+        apontando direto para um objeto sem PL/Scope) ficaria marcado
+        fino por engano e o proprio fallback dele seria bloqueado."""
+        self._subprogram_grain_objects.add((owner.upper(), object_name.upper()))
+
+    def _fallback_ref_if_covered(self, owner: str, object_name: str) -> Optional[str]:
+        """Item 2 de "TRADUCAO DE VISITED-SET": objeto ja expandido em
+        grao objeto (por QUALQUER gatilho anterior, direto ou transitivo)
+        aparece em `self.nodes` sob o ref de 2 partes. Checar isto ANTES
+        de `_load_object` evita a releitura via
+        `plscope_identifiers`/`plscope_statements` do motor fino."""
+        obj_ref = "{}.{}".format(owner.upper(), object_name.upper())
+        node = self.nodes.get(obj_ref)
+        if node is not None and node.grain == "object":
+            return obj_ref
+        return None
+
+    def _fallback_reason(
+        self, owner: str, object_name: str, cache: "_ObjectCache"
+    ) -> Optional[str]:
+        """Motivo LEGIVEL de rebaixamento para grao objeto, ou None se o
+        objeto continua em grao subprograma. Ordem de checagem: *wrapped*
+        primeiro (mais especifico), depois ausencia de identifiers --
+        NUNCA ausencia de statements sozinha (regra 7 do contrato: objeto
+        PARCIAL, identifiers sim/statements nao, continua fino -- ver
+        `_process_subprogram`, que so chama isto depois de `_load_object`
+        ja ter separado as duas capacidades)."""
+        if hasattr(self.extractor, "object_wrapped") and self.extractor.object_wrapped(
+            owner, object_name
+        ):
+            return (
+                "objeto wrapped -- PL/Scope nao consegue introspectar bytecode wrapped, "
+                "atribuicao por subprograma impossivel"
+            )
+        if not cache.has_identifiers:
+            return "sem PL/Scope identifiers -- atribuicao por subprograma impossivel"
+        return None
+
+    def _get_fallback_engine(self) -> "depgraph._DepGraphEngine":
+        if self._fallback_engine is None:
+            no_cap_objects = self.max_objects if self.max_objects is not None else _NO_CAP_SENTINEL
+            no_cap_depth = self.max_depth if self.max_depth is not None else _NO_CAP_SENTINEL
+            self._fallback_engine = depgraph._DepGraphEngine(
+                self.dep_extractor, self.stop_schemas, no_cap_objects, no_cap_depth
+            )
+        # Sincroniza ANTES de cada uso (nao so na criacao): o motor fino
+        # pode reclamar objetos novos entre um gatilho de fallback e o
+        # proximo. `enqueue`/`_process_object` do `_DepGraphEngine` ja
+        # no-opam sozinhos para qualquer chave presente em `visited` --
+        # nenhuma mudanca de comportamento la, so um visited-set
+        # pre-populado de fora (mesmo mecanismo que `from_result` usa).
+        self._fallback_engine.visited.update(self._subprogram_grain_objects)
+        return self._fallback_engine
+
+    def _fallback_object_grain(self, owner: str, object_name: str, reason: str) -> str:
+        """Executa o fallback de grao objeto para (owner, object_name):
+        expande via `_DepGraphEngine` reusado (fronteira/sinonimo/
+        db_link/caps/catalogo, nao duplicados aqui) e devolve o ref de 2
+        partes do no resultante. Idempotente -- objeto ja expandido nesta
+        travessia (por outro gatilho) so devolve o ref existente."""
+        obj_ref = "{}.{}".format(owner.upper(), object_name.upper())
+        key = (owner.upper(), object_name.upper())
+
+        existing = self.nodes.get(obj_ref)
+        if existing is not None and existing.grain == "object":
+            return obj_ref
+
+        if self.dep_extractor is None:
+            # Regra dura do contrato: nunca omitir em silencio. Sem
+            # dep_extractor configurado nao ha como consultar
+            # ALL_DEPENDENCIES para expandir o objeto -- declara o gap
+            # (truncamento + ponto cego) em vez de fingir cobertura ou de
+            # derrubar a travessia inteira com uma excecao.
+            self.nodes[obj_ref] = ProcNode(
+                owner=key[0],
+                object_name=key[1],
+                subprogram="",
+                grain="object",
+                is_leaf=True,
+                note="{} -- fallback grao objeto indisponivel: nenhum dep_extractor configurado".format(
+                    reason
+                ),
+            )
+            self.blind_spots.append("{} ({}, sem dep_extractor)".format(obj_ref, reason))
+            self.not_expanded.append(obj_ref)
+            self.note_truncation(
+                "fallback grao objeto exigido para {} mas nenhum dep_extractor foi configurado".format(
+                    obj_ref
+                )
+            )
+            return obj_ref
+
+        self._fallback_root_reasons.setdefault(key, reason)
+        engine = self._get_fallback_engine()
+        engine.enqueue(owner, object_name, 0, None)
+        engine.run()
+        self._sync_fallback_results()
+        return obj_ref
+
+    def _sync_fallback_results(self) -> None:
+        """Espelha o estado atual do `_DepGraphEngine` reusado para dentro
+        de `self.nodes`/`self.edges`/`self.needs_recompile`. Roda inteiro
+        (nao so o delta) a cada chamada -- barato (subgrafos de fallback
+        sao tipicamente pequenos) e mantem tudo deterministico/idempotente
+        sem precisar rastrear o que ja foi sincronizado antes."""
+        engine = self._fallback_engine
+        if engine is None:
+            return
+
+        for key, dep_node in engine.nodes.items():
+            obj_ref = "{}.{}".format(key[0], key[1])
+            root_reason = self._fallback_root_reasons.get(key)
+            if root_reason is not None and dep_node.note:
+                note = "{}; {}".format(root_reason, dep_node.note)
+            else:
+                note = root_reason or dep_node.note
+            proc_node = self.nodes.get(obj_ref)
+            if proc_node is None:
+                self.nodes[obj_ref] = ProcNode(
+                    owner=dep_node.owner,
+                    object_name=dep_node.object_name,
+                    subprogram="",
+                    grain="object",
+                    plscope_identifiers=dep_node.plscope_identifiers,
+                    plscope_statements=dep_node.plscope_statements,
+                    is_leaf=dep_node.is_leaf,
+                    note=note,
+                )
+            else:
+                proc_node.is_leaf = dep_node.is_leaf
+                proc_node.plscope_identifiers = dep_node.plscope_identifiers
+                proc_node.plscope_statements = dep_node.plscope_statements
+                proc_node.note = note
+
+        for dep_edge in engine.edges:
+            # ProcEdge nao modela todos os campos de DepEdge (op/cols/
+            # dynamic/context/snippet_ref sao especificos de grao objeto
+            # com STMT, fora do escopo desta tarefa) -- so a conectividade
+            # (from/to/tipo/linha/confidence) atravessa o merge.
+            self._add_edge(
+                dep_edge.from_ref,
+                dep_edge.to_ref,
+                dep_edge.edge_type,
+                dep_edge.line,
+                resolved=True,
+                confidence=dep_edge.confidence,
+            )
+
+        for ref in engine.needs_recompile:
+            if ref not in self.needs_recompile:
+                self.needs_recompile.append(ref)
 
     # ---- carga de objeto (cacheada, uma leitura por objeto na vida da BFS) ----
 
@@ -584,6 +926,30 @@ class _ProcGraphEngine:
                 (r for r in body_identifiers if r.usage_context_id == 0 and r.usage == "DEFINITION"),
                 None,
             )
+            if root_def is None:
+                # TRIGGER (fato provado contra o banco dev, T-05, contrato
+                # depgraph-granular: GESTAO.TRG_FLOW_DEMO_LOG): a raiz
+                # (usage_context_id=0) e uma DECLARATION, com a DEFINITION
+                # correspondente como filho DIRETO dela (usage_context_id
+                # == usage_id da DECLARATION) -- diferente de PROCEDURE/
+                # FUNCTION standalone, cuja raiz ja E a propria DEFINITION.
+                # Sem este fallback, todo TRIGGER ficava com
+                # public_subprograms=[] e nunca virava no de subprograma
+                # nenhum (entrega 3 de T-05 -- "trigger entra como
+                # subprograma" -- ficava impossivel de alcancar).
+                root_decl = next(
+                    (r for r in body_identifiers if r.usage_context_id == 0 and r.usage == "DECLARATION"),
+                    None,
+                )
+                if root_decl is not None:
+                    root_def = next(
+                        (
+                            r
+                            for r in body_identifiers
+                            if r.usage_context_id == root_decl.usage_id and r.usage == "DEFINITION"
+                        ),
+                        None,
+                    )
             public_subprograms = [root_def.name] if root_def else []
         else:
             public_subprograms = []
@@ -664,6 +1030,21 @@ class _ProcGraphEngine:
         ):
             owner_hint = self.extractor.resolve_owner(assignment.signature)
             if owner_hint is not None:
+                # T-04: objeto ja coberto pelo fallback (grao objeto) por
+                # um gatilho anterior -- nao retoca (item 2 de "TRADUCAO
+                # DE VISITED-SET" na docstring do modulo). So aresta.
+                covered_ref = self._fallback_ref_if_covered(owner_hint[0], owner_hint[1])
+                if covered_ref is not None:
+                    self._add_edge(
+                        from_ref,
+                        covered_ref,
+                        "CALL",
+                        assignment.line,
+                        signature=assignment.signature,
+                        resolved=True,
+                    )
+                    return
+
                 loaded = self._load_object(owner_hint[0], owner_hint[1])
                 if loaded is None:
                     # Objeto CONHECIDO (resolve_owner achou) mas o cap de
@@ -681,6 +1062,29 @@ class _ProcGraphEngine:
                         "{}.{}".format(owner_hint[0].upper(), owner_hint[1].upper())
                     )
                 else:
+                    fallback_reason = self._fallback_reason(owner_hint[0], owner_hint[1], loaded)
+                    if fallback_reason is not None:
+                        # T-04: e exatamente aqui que a cadeia sumia antes
+                        # desta tarefa -- o objeto carregado nao contribui
+                        # nenhuma DEFINITION (sem identifiers utilizaveis),
+                        # entao a signature NUNCA vai resolver por mais
+                        # tentativas que fizermos. Em vez de um
+                        # `__UNRESOLVED__` sem saida, o destino inteiro
+                        # cai no fallback de grao objeto -- e tudo que ELE
+                        # alcanca continua a travessia (docstring do
+                        # modulo, secao "FALLBACK DE GRAO OBJETO").
+                        obj_ref = self._fallback_object_grain(
+                            owner_hint[0], owner_hint[1], fallback_reason
+                        )
+                        self._add_edge(
+                            from_ref,
+                            obj_ref,
+                            "CALL",
+                            assignment.line,
+                            signature=assignment.signature,
+                            resolved=True,
+                        )
+                        return
                     resolved = resolve_call_target(call_row, self._definition_index)
 
         if isinstance(resolved, ResolvedCall):
@@ -696,6 +1100,11 @@ class _ProcGraphEngine:
                 resolved=True,
             )
             self._enqueue_subprogram(to_key_owner, to_key_object, resolved.subprogram, depth + 1)
+            # T-04: ResolvedCall so acontece quando o alvo ja contribuiu
+            # DEFINITION (identifiers presentes) -- reclama o objeto para
+            # o territorio fino AGORA (no enqueue), nao so quando ele for
+            # de fato desenfileirado (ver `_claim_subprogram_grain`).
+            self._claim_subprogram_grain(to_key_owner, to_key_object)
             return
 
         # UnresolvedCall definitivo: nunca omitida (regra dura do
@@ -733,29 +1142,66 @@ class _ProcGraphEngine:
         if not cap_blocked:
             self.blind_spots.append("{} -> {} ({})".format(from_ref, assignment.target, reason))
 
-    def _process_stmt(self, owner: str, object_name: str, subprogram: str, cache: _ObjectCache, assignment: Assignment) -> None:
+    def _process_stmt(
+        self,
+        owner: str,
+        object_name: str,
+        subprogram: str,
+        cache: _ObjectCache,
+        assignment: Optional[Assignment],
+        depth: int,
+    ) -> None:
         # Seam de T-05 (ver docstring do modulo) -- statement ja atribuido
         # ao subprograma EXATO (nunca ao objeto inteiro, diferenca chave
-        # para graph.py). Stub devolve [] ate T-05 existir.
+        # para graph.py). `assignment=None` e a varredura POR SUBPROGRAMA
+        # (T-05, entrega 2 -- estado de package, ver chamada em
+        # `_process_subprogram`): acesso a variavel/constante/cursor de
+        # package acontece via identificador ASSIGNMENT/REFERENCE solto,
+        # que NUNCA vira um STATEMENT do PL/Scope (`V_X := 5;` nao entra
+        # em ALL_STATEMENTS), entao um subprograma que so mexe em estado
+        # (sem SQL nenhum) precisa do seam disparado mesmo sem nenhum
+        # Assignment kind=STMT -- senao seu STATE_WRITE nunca apareceria.
+        # `extractor` repassado (T-05, entrega 3): expand_access usa
+        # `extractor.triggers` (Protocol OPCIONAL, mesmo padrao hasattr de
+        # `resolve_owner`/`object_wrapped`) para achar os triggers de uma
+        # tabela escrita -- descoberta reusa o caminho de
+        # `depgraph._DepGraphEngine.expand_triggers`, mas o destino aqui e
+        # a FILA deste motor fino (enqueue de TRIGGER_FIRES abaixo), nao
+        # uma folha. Stub devolve [] ate T-05 existir.
         edges = _expand_access(
             owner=owner,
             object_name=object_name,
             subprogram=subprogram,
             statement=assignment,
             object_cache=cache,
+            extractor=self.extractor,
         )
         for edge in edges or []:
-            if isinstance(edge, ProcEdge):
-                self._add_edge(
-                    edge.from_ref,
-                    edge.to_ref,
-                    edge.edge_type,
-                    edge.line,
-                    signature=edge.signature,
-                    resolved=edge.resolved,
-                    reason=edge.reason,
-                    confidence=edge.confidence,
-                )
+            if not isinstance(edge, ProcEdge):
+                continue
+            self._add_edge(
+                edge.from_ref,
+                edge.to_ref,
+                edge.edge_type,
+                edge.line,
+                signature=edge.signature,
+                resolved=edge.resolved,
+                reason=edge.reason,
+                confidence=edge.confidence,
+                op=edge.op,
+                cols=edge.cols,
+            )
+            if edge.edge_type == "TRIGGER_FIRES":
+                # T-05, entrega 3: trigger de tabela escrita entra na
+                # travessia COMO SUBPROGRAMA -- `to_ref` e uma ref de 3
+                # partes (OWNER.TRIGGER.TRIGGER, mesmo formato de `_ref`)
+                # que `expand_access` ja resolveu; o visited-set de
+                # `_enqueue_subprogram` garante que um trigger ja
+                # alcancado (ex.: ciclo T1->TRG1->T2->TRG2->T1) nunca
+                # reentra na fila -- so a aresta (o ciclo) fica visivel.
+                parts = edge.to_ref.split(".")
+                if len(parts) == 3:
+                    self._enqueue_subprogram(parts[0], parts[1], parts[2], depth + 1)
 
     # ---- processamento de um subprograma desenfileirado ----
 
@@ -764,6 +1210,15 @@ class _ProcGraphEngine:
         if ref in self.nodes:
             # Defensivo (mesmo padrao de _DepGraphEngine._process_object):
             # o visited-set do enqueue ja evita duplicata.
+            return
+
+        # T-04: objeto ja coberto pelo fallback -- nao retoca (mesma
+        # invariante de _process_call, item 2 de "TRADUCAO DE
+        # VISITED-SET"). So acontece na pratica quando um ResolvedCall
+        # aponta para um objeto que TAMBEM acaba marcado fallback (ex.:
+        # wrapped com identifiers residuais, ver _fallback_reason) --
+        # rede de seguranca, nao o caminho principal.
+        if self._fallback_ref_if_covered(owner, object_name) is not None:
             return
 
         cache = self._load_object(owner, object_name)
@@ -776,6 +1231,27 @@ class _ProcGraphEngine:
             self.not_expanded.append(ref)
             return
 
+        fallback_reason = self._fallback_reason(owner, object_name, cache)
+        if fallback_reason is not None:
+            # PONTO DE DECISAO do T-04 (regra 7 do contrato): objeto
+            # alcancado DIRETO (raiz de 3 partes nomeando um subprograma
+            # de um objeto sem PL/Scope utilizavel -- unico jeito deste
+            # ramo disparar sem passar pelo caminho equivalente em
+            # `_process_call`, ja que ResolvedCall exige DEFINITION
+            # indexada, que exige identifiers) cai no MESMO fallback de
+            # grao objeto. O no de 3 partes (`ref`) NUNCA e criado aqui:
+            # identidade de fallback e sempre de 2 partes (plano, secao
+            # "Identidade de no") -- nenhuma aresta de entrada preexistia
+            # apontando para o ref de 3 partes neste cenario (ver
+            # docstring do modulo para a prova completa).
+            self._fallback_object_grain(owner, object_name, fallback_reason)
+            return
+
+        # Identifiers confirmados -- reclama o objeto para o territorio
+        # fino (rede de seguranca; ResolvedCall/__INIT__ ja reclamam mais
+        # cedo, no enqueue -- ver `_claim_subprogram_grain`).
+        self._claim_subprogram_grain(owner, object_name)
+
         node = ProcNode(
             owner=owner.upper(),
             object_name=object_name.upper(),
@@ -784,21 +1260,6 @@ class _ProcGraphEngine:
             plscope_statements=cache.has_statements,
         )
         self.nodes[ref] = node
-
-        if not cache.has_identifiers:
-            # PONTO DE DECISAO para T-04 (regra 7 do contrato): objeto sem
-            # identifiers utilizaveis torna a atribuicao por subprograma
-            # impossivel -- este e exatamente o caso que o fallback de
-            # grao objeto (T-04, reusando depgraph._DepGraphEngine com o
-            # MESMO visited-set desta travessia) precisa tratar. T-03 nao
-            # implementa o fallback: so marca o no e para aqui, sem
-            # inventar dado nem quebrar a travessia (o resto do grafo
-            # alcancado por OUTROS caminhos continua normalmente).
-            node.grain = "object"
-            node.is_leaf = True
-            node.note = "sem PL/Scope identifiers -- fallback grao objeto (T-04, nao implementado aqui)"
-            self.blind_spots.append("{} (sem PL/Scope identifiers)".format(ref))
-            return
 
         # __INIT__ entra na fila junto com o PRIMEIRO subprograma
         # alcancado deste objeto (ver docstring do modulo, secao
@@ -816,6 +1277,13 @@ class _ProcGraphEngine:
             self.not_expanded.append(ref)
             return
 
+        # T-05, entrega 2: varredura de estado POR SUBPROGRAMA, uma vez,
+        # ANTES/independente do laco de assignments abaixo -- ver docstring
+        # de `_process_stmt` para o motivo (acesso a estado nao e um STMT,
+        # entao um subprograma so-de-estado nunca dispararia o seam se a
+        # chamada fosse so por statement).
+        self._process_stmt(owner, object_name, subprogram, cache, None, depth)
+
         assignments = sorted(
             cache.assignments_by_enclosing.get(subprogram, []), key=lambda a: a.usage_id
         )
@@ -827,7 +1295,7 @@ class _ProcGraphEngine:
                 if len(self.edges) > before:
                     outbound += 1
             else:  # STMT -- seam de T-05
-                self._process_stmt(owner, object_name, subprogram, cache, assignment)
+                self._process_stmt(owner, object_name, subprogram, cache, assignment, depth)
 
         node.is_leaf = outbound == 0
 
@@ -872,6 +1340,8 @@ class _ProcGraphEngine:
             "objects_loaded": len(self._object_cache),
             "not_expanded": len(self.not_expanded),
             "blind_spots": len(self.blind_spots),
+            "needs_recompile": len(self.needs_recompile),
+            "fallback_objects": sum(1 for n in self.nodes.values() if n.grain == "object"),
             "max_objects": self.max_objects,
             "max_depth": self.max_depth,
         }
@@ -889,6 +1359,7 @@ class _ProcGraphEngine:
             truncation_reason=self.truncation_reason,
             not_expanded=sorted(set(self.not_expanded)),
             blind_spots=sorted(set(self.blind_spots)),
+            needs_recompile=sorted(set(self.needs_recompile)),
             stats=stats,
         )
 
@@ -899,8 +1370,11 @@ def build_proc_graph(
     roots: Optional[Sequence[RootLike]] = None,
     max_objects: Optional[int] = None,
     max_depth: Optional[int] = None,
+    dep_extractor: Optional["depgraph.DepExtractor"] = None,
+    stop_schemas: Sequence[str] = ("SYS", "SYSTEM"),
 ) -> ProcGraphResult:
-    """Ponto de entrada publico do motor (T-03).
+    """Ponto de entrada publico do motor (T-03; `dep_extractor`/
+    `stop_schemas` sao acrescimo do T-04).
 
     `root`/`roots`: mesmo padrao aditivo de `depgraph.build_dep_graph`
     (`root` obrigatorio, `roots` opcional para raizes ADICIONAIS na MESMA
@@ -916,11 +1390,26 @@ def build_proc_graph(
     `ProcGraphResult.not_expanded` -- nunca silenciosamente (ver
     `_ProcGraphEngine._load_object`/`_process_subprogram`).
 
+    `dep_extractor` (T-04): fonte de dados do fallback de grao objeto
+    (`plsqlflow.depgraph.DepExtractor`, o MESMO Protocol que
+    `depgraph.build_dep_graph` consome) -- so e usado quando a travessia
+    de fato alcanca um objeto sem PL/Scope utilizavel ou wrapped (ver
+    docstring do modulo, secao "FALLBACK DE GRAO OBJETO"). `None`
+    (default) e valido para qualquer alvo que nunca precisar do fallback;
+    quando o fallback e necessario e nenhum `dep_extractor` foi passado,
+    o gap fica declarado (`not_expanded`/`blind_spots`/`truncated`),
+    nunca omitido em silencio nem derruba a travessia inteira.
+    `stop_schemas` e repassado direto ao `_DepGraphEngine` reusado (mesmo
+    default de `depgraph.build_dep_graph`).
+
     Terminacao garantida mesmo com ciclo (recursao direta, mutua, ou
-    atravessando N objetos) pelo visited-set marcado no enqueue -- ver
-    docstring do modulo para a prova completa.
+    atravessando N objetos -- inclusive ciclo que atravessa o fallback)
+    pelo visited-set marcado no enqueue -- ver docstring do modulo para a
+    prova completa.
     """
-    engine = _ProcGraphEngine(extractor, max_objects, max_depth)
+    engine = _ProcGraphEngine(
+        extractor, max_objects, max_depth, dep_extractor=dep_extractor, stop_schemas=stop_schemas
+    )
     engine.seed(root)
     for extra_root in roots or ():
         engine.seed(extra_root)

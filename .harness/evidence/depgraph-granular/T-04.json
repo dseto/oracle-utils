@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-04",
+  "contract": "depgraph-granular",
+  "desc": "Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado",
+  "files": [
+    "plsqlflow/procgraph.py",
+    "tests/test_procgraph_fallback.py"
+  ],
+  "verify_cmd": "pytest tests/test_procgraph_fallback.py -q",
+  "recorded_at": "2026-08-16T01:13:38.503179+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:a6be949ff6ce5ba6301b9abee0f2eeee775e3f8dc788d5d327b1778567e2ced6"
+}

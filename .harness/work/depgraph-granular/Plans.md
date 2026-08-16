@@ -104,7 +104,7 @@ motivo. Objeto recompilavel entra na lista de recompilacao.
 
 ## [T-05] O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara
 
-- files: `plsqlflow/procgraph_access.py`, `tests/test_procgraph_access.py`
+- files: `plsqlflow/procgraph_access.py`, `tests/test_procgraph_access.py`, `plsqlflow/procgraph.py`, `plsqlflow/attribute.py`
 - verify: `pytest tests/test_procgraph_access.py -q`
 - depends: T-03
 
