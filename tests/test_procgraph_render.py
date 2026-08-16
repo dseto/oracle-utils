@@ -656,9 +656,83 @@ def test_builtin_calls_field_matches_stats_and_never_empty_for_length_call():
     assert not any("LENGTH" in spot for spot in result.blind_spots)
 
     length_node = next(
-        n for n in result.nodes if n.grain == "unresolved" and n.subprogram == "LENGTH"
+        n for n in result.nodes if n.grain == "unresolved" and n.subprogram.startswith("LENGTH")
     )
     assert length_node.is_builtin is True
+
+
+def test_two_different_signature_builtin_calls_never_collide_on_disk(tmp_path):
+    # CORRECAO (verificacao independente, rodada 6): dois pontos de chamada
+    # do MESMO builtin (mesmo nome, TO_CHAR) mas com SIGNATURES diferentes
+    # (o compilador resolveu sobrecargas distintas -- caso real confirmado
+    # ao vivo contra GESTAO_OO: INDEX.md declarava 33 nos mas so 32
+    # arquivos existiam em disco, porque node_filename derivava so de
+    # owner/object_name/subprogram, sem a signature que distingue os dois
+    # __EXTERNAL__ internamente). O FATO nunca sumia de edges.jsonl -- so a
+    # materializacao individual (.md) de um dos dois sobrescrevia o outro
+    # (last-write-wins). Prova end-to-end: duas procedures do MESMO
+    # package, cada uma chamando TO_CHAR com uma signature distinta.
+    spec_identifiers = [
+        {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_DUP", "type": "PACKAGE", "usage": "DEFINITION", "signature": None},
+        {"usage_id": 2, "usage_context_id": 1, "line": 2, "col": 3, "name": "P1", "type": "PROCEDURE", "usage": "DECLARATION", "signature": None},
+        {"usage_id": 3, "usage_context_id": 1, "line": 3, "col": 3, "name": "P2", "type": "PROCEDURE", "usage": "DECLARATION", "signature": None},
+    ]
+    body_identifiers = [
+        {"usage_id": 1, "usage_context_id": 0, "line": 1, "col": 1, "name": "PKG_DUP", "type": "PACKAGE", "usage": "DEFINITION", "signature": None},
+        {"usage_id": 2, "usage_context_id": 1, "line": 3, "col": 13, "name": "P1", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_P1"},
+        {"usage_id": 3, "usage_context_id": 2, "line": 4, "col": 5, "name": "TO_CHAR", "type": "FUNCTION", "usage": "CALL", "signature": "15AD55988A9AAF970F3ED0B340B6CDA4"},
+        {"usage_id": 4, "usage_context_id": 1, "line": 6, "col": 13, "name": "P2", "type": "PROCEDURE", "usage": "DEFINITION", "signature": "SIG_P2"},
+        {"usage_id": 5, "usage_context_id": 4, "line": 7, "col": 5, "name": "TO_CHAR", "type": "FUNCTION", "usage": "CALL", "signature": "BC715965CB1F2CBD7DE6AC9AAA7608DD"},
+    ]
+    fixture = {
+        "objects": {
+            "GESTAO.PKG_DUP": {
+                "trees": [
+                    {"object_type": "PACKAGE", "identifiers": spec_identifiers, "statements": []},
+                    {"object_type": "PACKAGE BODY", "identifiers": body_identifiers, "statements": []},
+                ]
+            }
+        }
+    }
+    extractor = FakeExtractor(fixture)
+
+    # raiz de 2 partes: semeia P1 E P2 (API publica inteira), garantindo que
+    # os DOIS pontos de chamada a TO_CHAR sejam de fato visitados.
+    result = build_proc_graph(extractor, ("GESTAO", "PKG_DUP"))
+
+    to_char_nodes = [n for n in result.nodes if n.subprogram.startswith("TO_CHAR")]
+    assert len(to_char_nodes) == 2, "as duas signatures tem que virar DOIS nos distintos"
+    assert to_char_nodes[0].subprogram != to_char_nodes[1].subprogram
+
+    out_dir = tmp_path / "graph"
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    written_files = sorted(p.name for p in (out_dir / "nodes").glob("UNKNOWN.UNKNOWN.TO_CHAR*.md"))
+    assert len(written_files) == 2, "colisao de arquivo: {}".format(written_files)
+
+    # cabecalhos distintos -- nenhum dos dois sobrescreveu o outro (nota:
+    # a secao "Chamado por" de no NAO-RESOLVIDO fica vazia independente
+    # desta correcao -- gap PRE-EXISTENTE e separado, ver
+    # docs/backlog-depgraph-pontos-cegos.md; o `to_ref` do CALL usa a
+    # signature INTEIRA, `node_ref` usa o sufixo curto, e os dois nunca
+    # bateram, nem antes nem depois deste fix. O fato em si NAO some --
+    # continua em edges.jsonl e na propria linha do no chamador -- so a
+    # secao "Chamado por" do lado do builtin fica muda).
+    contents = [(out_dir / "nodes" / f).read_text(encoding="utf-8") for f in written_files]
+    headers = {c.splitlines()[0] for c in contents}
+    assert len(headers) == 2, "os dois arquivos tem o MESMO cabecalho: {}".format(headers)
+
+    # e a contagem de nos no INDEX bate com o numero de arquivos gravados
+    # para este alvo (nenhum no "fantasma" contado mas nao materializado).
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+    assert index_text.count("UNKNOWN.UNKNOWN.TO_CHAR") == 2
+
+    # os DOIS pontos de chamada continuam visiveis em edges.jsonl, cada um
+    # com o `to_ref` da signature correta -- o fato nunca dependeu do
+    # arquivo individual para sobreviver.
+    edges_text = (out_dir / "edges.jsonl").read_text(encoding="utf-8")
+    assert "15AD55988A9AAF970F3ED0B340B6CDA4" in edges_text
+    assert "BC715965CB1F2CBD7DE6AC9AAA7608DD" in edges_text
 
 
 def test_builtin_classification_requires_resolve_owner_lookup():
@@ -691,7 +765,7 @@ def test_builtin_classification_requires_resolve_owner_lookup():
     assert any("LENGTH" in spot for spot in result.blind_spots)
     assert not any("LENGTH" in spot for spot in result.builtin_calls)
     length_node = next(
-        n for n in result.nodes if n.grain == "unresolved" and n.subprogram == "LENGTH"
+        n for n in result.nodes if n.grain == "unresolved" and n.subprogram.startswith("LENGTH")
     )
     assert length_node.is_builtin is False
 

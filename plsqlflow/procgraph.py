@@ -1354,6 +1354,7 @@ class _ProcGraphEngine:
         owner_hint: Optional[Tuple[str, str]],
         reason: str,
         is_builtin: bool = False,
+        signature: Optional[str] = None,
     ) -> None:
         if ref in self.nodes:
             return
@@ -1362,7 +1363,24 @@ class _ProcGraphEngine:
             subprogram = "__UNRESOLVED__"
         else:
             owner, object_name = "UNKNOWN", "UNKNOWN"
-            subprogram = called_name
+            # CORRECAO (verificacao independente, rodada 6): `ref` (a chave
+            # interna deste dict, `__EXTERNAL__.<nome>.<signature>`) e
+            # UNICA por signature -- mas `node_filename`/`node_ref` em
+            # procgraph_render.py reconstroem o nome do arquivo so a partir
+            # de owner/object_name/subprogram, sem acesso a `ref`. Dois
+            # alvos externos com o MESMO nome e signatures DIFERENTES (caso
+            # real confirmado: TO_CHAR chamado de dois pontos do processo,
+            # cada um com a signature da sobrecarga que o compilador
+            # resolveu) geravam dois `ProcNode` distintos (contados certo
+            # em `nodes`/COBERTURA) mas escritos no MESMO arquivo -- o
+            # segundo sobrescrevia o `.md` do primeiro (last-write-wins),
+            # perdendo a secao "Chamado por" de um dos dois lados (o FATO
+            # em si sobrevivia em edges.jsonl, so a materializacao
+            # individual perdia). Sufixo curto e deterministico da propria
+            # signature (nunca de contagem/ordem de travessia, que mudaria
+            # entre execucoes) resolve sem afetar o caso comum (signature
+            # ausente -- so um no `NOSIG` possivel por nome, sem colisao).
+            subprogram = called_name if not signature else "{}#{}".format(called_name, signature[:8])
         self.nodes[ref] = ProcNode(
             owner=owner,
             object_name=object_name,
@@ -1523,7 +1541,12 @@ class _ProcGraphEngine:
 
         unresolved_ref = self._unresolved_ref(assignment.target, assignment.signature, owner_hint)
         self._ensure_unresolved_node(
-            unresolved_ref, assignment.target, owner_hint, reason, is_builtin=is_builtin
+            unresolved_ref,
+            assignment.target,
+            owner_hint,
+            reason,
+            is_builtin=is_builtin,
+            signature=assignment.signature,
         )
         self._add_edge(
             from_ref,

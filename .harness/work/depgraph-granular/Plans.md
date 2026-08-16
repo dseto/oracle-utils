@@ -166,7 +166,7 @@ PROC_A/PROC_B ja existente na fixture mais um ciclo inter-package.
 
 ## [T-08] O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto
 
-- files: `plsqlflow/procgraph_render.py`, `plsqlflow/cli.py`, `tests/test_procgraph_render.py`, `tests/test_cli_granular.py`
+- files: `plsqlflow/procgraph_render.py`, `plsqlflow/cli.py`, `tests/test_procgraph_render.py`, `tests/test_cli_granular.py`, `docs/backlog-depgraph-pontos-cegos.md`
 - verify: `pytest tests/test_procgraph_render.py tests/test_cli_granular.py -q`
 - depends: T-03, T-04, T-05, T-07
 

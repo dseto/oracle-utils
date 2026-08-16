@@ -8,7 +8,7 @@
     "tests/fixtures/plscope_tree.json"
   ],
   "verify_cmd": "pytest tests/test_attribute.py -q",
-  "recorded_at": "2026-08-16T14:27:17.357214+00:00",
+  "recorded_at": "2026-08-16T15:17:22.659289+00:00",
   "exit_code": 0,
   "files_hash": "sha256:f48a8ad6f71dbe832dc23fd41296a2add329aedeca24009605fefa032eabdd83"
 }

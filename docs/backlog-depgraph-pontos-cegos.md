@@ -186,6 +186,33 @@ Correção é de uma linha, mas `plsqlflow/graph.py`/`report.py` estão congelad
 por golden test do contrato `plsqlflow-py` — mexer exige contrato próprio com
 regeneração do golden. Não é trabalho grande; é trabalho que precisa de gate.
 
+## 5.2 Defeito conhecido e NÃO corrigido: "Chamado por" vazio em nó não-resolvido
+
+Achado durante a correção da colisão de arquivo entre builtins homônimos
+(rodada 6 de verificação). O `to_ref` de uma aresta `CALL` para um nó
+não-resolvido/builtin usa a **signature inteira**
+(`__EXTERNAL__.<nome>.<signature completa>`), enquanto `node_ref`/
+`node_filename` (usados para renderizar a seção `## Chamado por`)
+reconstroem a identidade do nó a partir de `owner`/`object_name`/
+`subprogram` — que carrega só o **sufixo curto** da signature (8
+caracteres, ver seção 5.1 acima). As duas strings nunca batem, então a
+seção `## Chamado por` de todo nó `UNKNOWN.UNKNOWN.*` (builtin ou alvo
+genuinamente não resolvido) sai **vazia** — pré-existente, não introduzido
+pela correção da colisão, confirmado ao vivo contra `GESTAO_OO`.
+
+**Não é omissão do fato**: a chamada continua em `edges.jsonl` (com a
+signature completa) e na seção `## Chama (outbound)` do nó **chamador**.
+Só a vista "de quem me chama", olhando a partir do nó chamado, fica muda —
+para um builtin isso quase nunca importa (a seção existe pra alvo real, não
+pra `SYS.STANDARD`), mas para um alvo não-resolvido genuíno (linha
+`## PONTOS CEGOS`) pode ser informação útil que fica só do lado errado do
+grafo.
+
+Fix mecânico (não feito aqui, fora do escopo da correção que o motivou):
+fazer `_unresolved_ref`/`_ensure_unresolved_node` derivarem o mesmo sufixo
+curto usado no `subprogram`, em vez de duas fontes de verdade (`ref` interno
+vs. campos do `ProcNode`) para a mesma identidade.
+
 ## 6. Decisões pendentes antes de virar contrato
 
 1. Item A e item B num contrato só, ou dois? (A é barato e independente; B
