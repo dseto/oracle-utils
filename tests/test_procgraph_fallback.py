@@ -87,8 +87,9 @@ def _empty_object() -> Dict[str, Any]:
 
 
 def _partial_object(pkg_name: str, proc_name: str, proc_sig: str) -> Dict[str, Any]:
-    """Identifiers presentes, statements AUSENTES -- objeto PARCIAL (regra
-    7 do contrato: continua fino, NAO cai no fallback)."""
+    """Identifiers presentes, statements AUSENTES -- objeto PARCIAL:
+    continua fino (NAO cai no fallback), com o gap de STATEMENTS declarado
+    a parte (ver test_partial_plscope_object_stays_subprogram_grain)."""
     identifiers = [
         _id_row(1, 0, 1, 1, pkg_name, "PACKAGE", "DEFINITION"),
         _id_row(2, 1, 3, 1, proc_name, "PROCEDURE", "DEFINITION", proc_sig),
@@ -359,12 +360,25 @@ def test_chain_a_b_c_determinism_two_runs_identical():
 
 
 def test_partial_plscope_object_stays_subprogram_grain():
+    # CORRECAO DE BLOQUEANTE (verificacao independente, rodada 5): esta
+    # fixture ja modelava "identifiers sim, statements nao" (docstring de
+    # `_partial_object`), mas a versao anterior deste teste afirmava
+    # `blind_spots == []` -- o gap nunca era declarado em lugar nenhum
+    # (nem blind_spots, nem needs_recompile), e o teste passava porque
+    # NADA declarava o gap, nao porque o gap nao existisse. E exatamente o
+    # padrao "nome do teste promete mais do que o corpo prova" apontado
+    # pela verificacao: o nome diz "stays subprogram grain" (verdadeiro) e
+    # ficava silencioso sobre a ausencia de declaracao (o defeito real).
+    #
+    # Sem dep_extractor de proposito: se o motor tentasse (por engano) cair
+    # em fallback aqui, a ausencia de dep_extractor declararia o gap via
+    # `truncated=True` -- as asserts abaixo provam que isso NUNCA acontece
+    # para um objeto so PARCIAL (identifiers sim, statements nao): ele
+    # continua em grao SUBPROGRAMA (CALL atribuida normalmente), e o gap de
+    # STATEMENTS e declarado A PARTE (blind_spots + needs_recompile),
+    # nunca via rebaixamento nem via silencio.
     proc_extractor = FakeProcExtractor()
 
-    # Sem dep_extractor de proposito: se o motor tentasse (por engano) cair
-    # em fallback aqui, a ausencia de dep_extractor declararia o gap
-    # (truncated=True) -- as asserts abaixo provam que isso NUNCA acontece
-    # para um objeto so PARCIAL (identifiers sim, statements nao).
     result = build_proc_graph(proc_extractor, ("GESTAO", "PARTIAL", "P1"))
 
     node = _node(result, "GESTAO.PARTIAL.P1")
@@ -374,8 +388,61 @@ def test_partial_plscope_object_stays_subprogram_grain():
     assert node.plscope_statements is False
 
     assert result.truncated is False
-    assert result.blind_spots == []
-    assert result.needs_recompile == []
+    assert result.blind_spots == [
+        "GESTAO.PARTIAL -> ? (objeto sem STATEMENTS:ALL -- acesso a tabela/estado/trigger/SQL "
+        "dinamico deste objeto e invisivel ao PL/Scope; CALLs continuam atribuidas normalmente, "
+        "so o que vem de STATEMENT esta faltando aqui)"
+    ]
+    assert result.needs_recompile == ["GESTAO.PARTIAL"]
+
+
+def test_partial_plscope_gap_declared_once_per_object_not_per_subprogram():
+    # O gap e do OBJETO (a arvore PL/Scope e lida e cacheada uma vez por
+    # objeto -- ver `_load_object`), nao de cada subprograma que sai dele.
+    # `PARTIAL` so tem um subprograma publico nesta fixture, entao a prova
+    # de dedup passa pelo numero de LEITURAS do objeto (`id_calls`/
+    # `stmt_calls`, mesmo contador ja usado por
+    # `test_cache_reads_flow_demo_object_exactly_once` em
+    # tests/test_procgraph_bfs.py): se `_load_object` fosse chamado mais
+    # de uma vez para o mesmo objeto, a declaracao duplicaria junto.
+    proc_extractor = FakeProcExtractor()
+
+    result = build_proc_graph(proc_extractor, ("GESTAO", "PARTIAL"))
+
+    partial_spots = [s for s in result.blind_spots if s.startswith("GESTAO.PARTIAL ->")]
+    assert len(partial_spots) == 1
+    assert result.needs_recompile.count("GESTAO.PARTIAL") == 1
+    assert proc_extractor.id_calls.get("GESTAO.PARTIAL") == 1
+    assert proc_extractor.stmt_calls.get("GESTAO.PARTIAL") == 1
+
+
+def test_full_statements_all_but_zero_sql_is_not_a_false_gap():
+    # Falso-positivo que a correcao precisa EVITAR (achado ao vivo contra
+    # GESTAO_OO.T_PARECER_COMPLIANCE.ADICIONAR_METRICA, metodo de TYPE
+    # cujo corpo e so manipulacao de colecao, sem SELECT/INSERT/EXECUTE
+    # IMMEDIATE nenhum -- STATEMENTS:ALL estava plenamente ativo e
+    # ALL_STATEMENTS tinha 0 linhas, por natureza, nao por falta de
+    # cobertura). `GESTAO.X` na fixture modela o mesmo formato: esta em
+    # DEP_PLSCOPE_FULL (settings dizem STATEMENTS:ALL) mas o objeto tem
+    # `statements=[]` em PROC_OBJECTS (zero SQL no corpo). COM
+    # dep_extractor presente, a settings REAL prevalece sobre a inferencia
+    # por presenca de linha -- nenhum ponto cego falso, nenhuma entrada
+    # falsa em needs_recompile.
+    proc_extractor = FakeProcExtractor()
+    dep_extractor = FakeDepExtractor()
+
+    result = build_proc_graph(
+        proc_extractor, ("GESTAO", "X", "P1"), dep_extractor=dep_extractor
+    )
+
+    node = _node(result, "GESTAO.X.P1")
+    assert node is not None
+    assert node.grain == "subprogram"
+    assert node.plscope_identifiers is True
+    assert node.plscope_statements is True  # settings prevalecem, nao bool([])
+
+    assert not any(s.startswith("GESTAO.X ->") for s in result.blind_spots)
+    assert "GESTAO.X" not in result.needs_recompile
 
 
 # --------------------------------------------------------------- wrapped (3)

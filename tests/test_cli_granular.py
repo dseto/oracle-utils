@@ -52,7 +52,19 @@ class FakeRootCheckExtractor:
     `_missing_roots`/`object_catalog` -- o fallback de grao objeto (T-04)
     ja tem prova dedicada em tests/test_procgraph_fallback.py; estes testes
     de CLI usam raizes que SEMPRE tem PL/Scope (nunca disparam o fallback),
-    entao os outros metodos do Protocol nunca sao chamados de verdade."""
+    entao os outros metodos do Protocol nunca sao chamados de verdade.
+
+    `plscope_check` DEIXOU de devolver `[]` incondicional (correcao de
+    BLOQUEANTE, verificacao independente rodada 5): o motor fino agora
+    consulta a settings REAL para todo objeto carregado (nao so no
+    fallback), para distinguir "STATEMENTS:ALL desligado" de "ligado mas
+    o corpo genuinamente nao tem SQL nenhum" -- varias fixtures deste
+    arquivo (ex.: PKG_API, cujos PUB1/PUB2 nao tem nenhum statement) sao
+    exatamente esse segundo caso, e um `[]` incondicional aqui faria o
+    fallback de inferencia (por presenca de linha) declarar um gap FALSO
+    -- exit 3 onde deveria ser exit 0. Devolve `IDENTIFIERS:ALL,
+    STATEMENTS:ALL` para todo objeto do catalogo passado ao construtor,
+    coerente com a premissa da classe ("raizes que SEMPRE tem PL/Scope")."""
 
     def __init__(self, catalog: Dict[str, List[extract.ObjectCatalogRow]]):
         self.catalog = catalog
@@ -64,7 +76,15 @@ class FakeRootCheckExtractor:
         return []
 
     def plscope_check(self, owner):
-        return []
+        return [
+            extract.PlscopeCheckRow(
+                owner=owner.upper(),
+                name=row.object_name,
+                type=row.object_type,
+                plscope_settings="IDENTIFIERS:ALL, STATEMENTS:ALL",
+            )
+            for row in self.catalog.get(owner.upper(), [])
+        ]
 
     def synonym(self, owner, name):
         return []
@@ -73,6 +93,18 @@ class FakeRootCheckExtractor:
         return []
 
     def tab_columns(self, owner, table_names):
+        return []
+
+    def statements(self, owner, object_name):
+        # Consequencia de `plscope_check` agora reportar STATEMENTS:ALL
+        # (ver docstring acima): o modo OBJETO (nao-granular), que este
+        # arquivo tambem exercita, passa a tentar buscar statements de
+        # verdade para objetos que ele julga cobertos -- este metodo
+        # precisa existir. Vazio = coerente com "objeto coberto, zero SQL
+        # no corpo" (mesmo caso de PKG_A/PKG_API nestas fixtures).
+        return []
+
+    def source(self, owner, object_name):
         return []
 
 
@@ -198,12 +230,14 @@ def test_object_mode_never_reaches_the_granular_code_path(monkeypatch, tmp_path)
     out_root = tmp_path / "out"
     rc = cli.depgraph_main(["GESTAO.PKG_A", "--output", str(out_root)])
 
-    # exit 3 (nao 0) porque `FakeRootCheckExtractor.plscope_check` devolve
-    # lista vazia: o modo objeto corretamente reporta grafo parcial. Nao e o
+    # exit 0: `FakeRootCheckExtractor.plscope_check` devolve settings
+    # completa para todo objeto do catalogo (correcao de BLOQUEANTE,
+    # verificacao independente rodada 5 -- ver docstring da classe), entao
+    # o modo objeto reporta grafo totalmente coberto. O EXIT CODE nao e o
     # que este teste mede -- o que importa e que a execucao percorreu o
     # pipeline INTEIRO ate gravar os arquivos sem NUNCA chamar o motor
     # granular (qualquer chamada teria estourado em `_explode`).
-    assert rc == cli.EXIT_NEEDS_RECOMPILE == 3
+    assert rc == cli.EXIT_OK == 0
     assert conn.closed is True
 
     out_dir = out_root / "GESTAO.PKG_A"
@@ -276,7 +310,7 @@ def test_granular_two_part_target_seeds_full_public_api(monkeypatch, tmp_path):
 def test_granular_default_depth_is_unlimited(monkeypatch, tmp_path):
     fixture = _load_fixture()
     proc_extractor = FakeExtractor(fixture)
-    dep_extractor = FakeRootCheckExtractor(_catalog("PKG_CH_A"))
+    dep_extractor = FakeRootCheckExtractor(_catalog("PKG_CH_A", "PKG_CH_B", "PKG_CH_C"))
     _patch_granular_pipeline(monkeypatch, proc_extractor, dep_extractor)
 
     out_root = tmp_path / "out"
@@ -296,7 +330,7 @@ def test_granular_default_depth_is_unlimited(monkeypatch, tmp_path):
 def test_granular_explicit_max_objects_truncates_with_declared_reason(monkeypatch, tmp_path, capsys):
     fixture = _load_fixture()
     proc_extractor = FakeExtractor(fixture)
-    dep_extractor = FakeRootCheckExtractor(_catalog("PKG_CH_A"))
+    dep_extractor = FakeRootCheckExtractor(_catalog("PKG_CH_A", "PKG_CH_B", "PKG_CH_C"))
     _patch_granular_pipeline(monkeypatch, proc_extractor, dep_extractor)
 
     out_root = tmp_path / "out"

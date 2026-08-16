@@ -393,8 +393,13 @@ class ProcNode:
     mesmo nome em `depgraph.DepNode` (T-06): as duas capacidades
     reportadas SEPARADAS, porque um objeto so com IDENTIFIERS (sem
     STATEMENTS) ainda permite atribuir CALL corretamente -- so os
-    acessos a tabela/SQL dinamico dele (via STMT) viram ponto cego, sem
-    rebaixar o objeto inteiro para grao objeto (regra 7 do contrato).
+    acessos a tabela/SQL dinamico dele (via STMT) viram ponto cego E
+    entram em needs_recompile (correcao de BLOQUEANTE, verificacao
+    independente rodada 5 -- ver `_load_object`), sem rebaixar o objeto
+    inteiro para grao objeto. Decisao de desenho deste motor (nao um
+    artigo numerado do plano aprovado -- comentarios anteriores citavam
+    "regra 7 do contrato" por engano, remissao a uma instrucao de
+    implementacao que nunca esteve em docs/plano-depgraph-granular.md).
 
     `object_type`/`is_frontier` (DEFEITO 4, relatorio de verificacao
     independente, 2026-08-16): so preenchidos para `grain="object"`
@@ -803,6 +808,10 @@ class _ProcGraphEngine:
         self._object_cache: Dict[Tuple[str, str], _ObjectCache] = {}
         self._definition_index: Dict[str, DefinitionEntry] = {}
         self._init_enqueued: Set[Tuple[str, str]] = set()
+        # Cache de PLSCOPE_SETTINGS por owner (correcao de BLOQUEANTE,
+        # verificacao independente rodada 5) -- ver `_plscope_settings_flags`.
+        self._plscope_settings_cache: Dict[str, Dict[str, str]] = {}
+        self._statements_gap_declared: Set[Tuple[str, str]] = set()
 
         # T-04: fallback de grao objeto (ver docstring do modulo, secao
         # "FALLBACK DE GRAO OBJETO" e "TRADUCAO DE VISITED-SET").
@@ -898,10 +907,14 @@ class _ProcGraphEngine:
         """Motivo LEGIVEL de rebaixamento para grao objeto, ou None se o
         objeto continua em grao subprograma. Ordem de checagem: *wrapped*
         primeiro (mais especifico), depois ausencia de identifiers --
-        NUNCA ausencia de statements sozinha (regra 7 do contrato: objeto
-        PARCIAL, identifiers sim/statements nao, continua fino -- ver
-        `_process_subprogram`, que so chama isto depois de `_load_object`
-        ja ter separado as duas capacidades)."""
+        NUNCA ausencia de statements sozinha: objeto PARCIAL (identifiers
+        sim, statements nao) continua fino, porque a CALL o compilador
+        ja provou -- rebaixar jogaria fora atribuicao correta. O gap de
+        STATEMENTS desse objeto e declarado a parte, uma vez por objeto,
+        em `_load_object` (blind_spots + needs_recompile), nao aqui --
+        ver `_process_subprogram`, que so chama isto depois de
+        `_load_object` ja ter separado as duas capacidades E declarado o
+        gap se houver."""
         if hasattr(self.extractor, "object_wrapped") and self.extractor.object_wrapped(
             owner, object_name
         ):
@@ -1115,6 +1128,57 @@ class _ProcGraphEngine:
 
     # ---- carga de objeto (cacheada, uma leitura por objeto na vida da BFS) ----
 
+    def _plscope_settings_flags(self, owner: str, object_name: str) -> Optional[Tuple[bool, bool]]:
+        """Devolve (tem_IDENTIFIERS_ALL, tem_STATEMENTS_ALL) lidos da
+        propria STRING `plscope_settings` (`all_plsql_object_settings`),
+        ou None se `dep_extractor` (Protocol OPCIONAL de `depgraph.py`,
+        so presente quando o CLI monta o fallback de T-04 -- no CLI real
+        SEMPRE presente) nao estiver disponivel.
+
+        CORRECAO DE BLOQUEANTE (verificacao independente, rodada 5):
+        `_ObjectCache.has_identifiers`/`has_statements` eram inferidos por
+        `bool(lista de linhas devolvida)` (ver `_load_object`) -- a MESMA
+        classe de defeito que T-06 corrigiu em `depgraph.py`
+        (`has_plscope` antes so olhava presenca de linha, nao a string de
+        settings). A inferencia por presenca de linha tem um falso
+        negativo real: um objeto com `STATEMENTS:ALL` plenamente ativo
+        mas cujo corpo GENUINAMENTE nao contem SQL embutido nenhum (ex.:
+        metodo de TYPE que so manipula colecao/atributo, sem SELECT/
+        INSERT/EXECUTE IMMEDIATE) tem `ALL_STATEMENTS` vazio por natureza
+        -- e `bool([])` reportava `plscope_statements=False`, como se a
+        cobertura estivesse incompleta quando na verdade esta 100%
+        completa e simplesmente nao ha nada para capturar (caso real
+        confirmado ao vivo: GESTAO_OO.T_PARECER_COMPLIANCE.
+        ADICIONAR_METRICA -- settings tem STATEMENTS:ALL, 0 linhas em
+        ALL_STATEMENTS para o objeto inteiro, corpo e so manipulacao de
+        colecao). Ler a STRING de settings elimina esse falso negativo:
+        `has_statements=True` quando a settings diz ALL, independente de
+        quantas linhas o SQL realmente tem.
+
+        Mesmo padrao de cache por owner de `depgraph._DepGraphEngine.
+        get_plscope` -- uma chamada `plscope_check(owner)` cobre todos os
+        objetos daquele owner, nao uma por objeto."""
+        if self.dep_extractor is None or not hasattr(self.dep_extractor, "plscope_check"):
+            return None
+        owner_key = owner.upper()
+        if owner_key not in self._plscope_settings_cache:
+            by_name: Dict[str, str] = {}
+            for row in self.dep_extractor.plscope_check(owner_key):
+                settings = getattr(row, "plscope_settings", None) or ""
+                name = getattr(row, "name", "").upper()
+                # Mesma regra de agregacao de depgraph.get_plscope: mais
+                # de uma linha para o mesmo nome (SPEC + BODY) -- a uniao
+                # das duas e o que importa (se qualquer uma das duas tiver
+                # a flag, a capacidade existe para o objeto agregado).
+                existing = by_name.get(name, "")
+                by_name[name] = existing + "," + settings
+            self._plscope_settings_cache[owner_key] = by_name
+        raw = self._plscope_settings_cache[owner_key].get(object_name.upper())
+        if raw is None:
+            return None
+        upper = raw.upper()
+        return "IDENTIFIERS:ALL" in upper, "STATEMENTS:ALL" in upper
+
     def _load_object(self, owner: str, object_name: str) -> Optional[_ObjectCache]:
         key = (owner.upper(), object_name.upper())
         cached = self._object_cache.get(key)
@@ -1211,6 +1275,16 @@ class _ProcGraphEngine:
         else:
             public_subprograms = []
 
+        # Capacidade REAL (da string de settings) quando disponivel;
+        # inferencia por presenca de linha so como ultimo recurso (sem
+        # dep_extractor -- comportamento anterior preservado nesse caso,
+        # nunca pior do que antes desta correcao).
+        settings_flags = self._plscope_settings_flags(owner, object_name)
+        if settings_flags is not None:
+            has_identifiers, has_statements = settings_flags
+        else:
+            has_identifiers, has_statements = bool(body_identifiers), bool(body_statements)
+
         cache = _ObjectCache(
             owner=owner.upper(),
             object_name=object_name.upper(),
@@ -1221,10 +1295,31 @@ class _ProcGraphEngine:
             assignments_by_enclosing=assignments_by_enclosing,
             definitions=definitions,
             public_subprograms=public_subprograms,
-            has_identifiers=bool(body_identifiers),
-            has_statements=bool(body_statements),
+            has_identifiers=has_identifiers,
+            has_statements=has_statements,
         )
         self._object_cache[key] = cache
+
+        # CORRECAO DE BLOQUEANTE (verificacao independente, rodada 5):
+        # objeto GENUINAMENTE parcial -- identifiers sim, statements NAO,
+        # confirmado pela string de settings, nao por ausencia de linha --
+        # continua em grao fino (a CALL o compilador ja provou, ver
+        # `_fallback_reason`), mas o acesso derivado de STATEMENT
+        # (READ/WRITE/estado/trigger/SQL dinamico) deste objeto e
+        # INVISIVEL ao PL/Scope e precisa ficar declarado -- nunca
+        # silencioso. Uma vez por objeto (nao por subprograma): o gap e
+        # do OBJETO, nao de cada no individual que sai dele.
+        obj_ref = "{}.{}".format(owner.upper(), object_name.upper())
+        if has_identifiers and not has_statements and key not in self._statements_gap_declared:
+            self._statements_gap_declared.add(key)
+            self.blind_spots.append(
+                "{} -> ? (objeto sem STATEMENTS:ALL -- acesso a tabela/estado/trigger/SQL "
+                "dinamico deste objeto e invisivel ao PL/Scope; CALLs continuam atribuidas "
+                "normalmente, so o que vem de STATEMENT esta faltando aqui)".format(obj_ref)
+            )
+            if obj_ref not in self.needs_recompile:
+                self.needs_recompile.append(obj_ref)
+
         return cache
 
     # ---- resolucao de CALL, incluindo o salto inter-package ----
@@ -1575,7 +1670,7 @@ class _ProcGraphEngine:
 
         fallback_reason = self._fallback_reason(owner, object_name, cache)
         if fallback_reason is not None:
-            # PONTO DE DECISAO do T-04 (regra 7 do contrato): objeto
+            # PONTO DE DECISAO do T-04: objeto
             # alcancado DIRETO (raiz de 3 partes nomeando um subprograma
             # de um objeto sem PL/Scope utilizavel -- unico jeito deste
             # ramo disparar sem passar pelo caminho equivalente em
