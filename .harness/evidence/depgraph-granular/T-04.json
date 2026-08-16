@@ -7,7 +7,7 @@
     "tests/test_procgraph_fallback.py"
   ],
   "verify_cmd": "pytest tests/test_procgraph_fallback.py -q",
-  "recorded_at": "2026-08-16T12:32:51.465364+00:00",
+  "recorded_at": "2026-08-16T13:14:46.284651+00:00",
   "exit_code": 0,
   "files_hash": "sha256:c820391454e7abe4ed7f48c893cfa8df065a02e7e9055c2d603692d0ca53ec5e"
 }

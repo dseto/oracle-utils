@@ -172,6 +172,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from . import lexical
 from .depgraph_enrich import UNKNOWN_TARGET, dynamic_sql_findings
 
 # Tipos de `statement`/`object_cache`/edges retornados sao deliberadamente
@@ -491,51 +492,66 @@ def _open_stmt_is_dynamic(
 
     by_line: Dict[int, str] = {row.line: (row.text or "") for row in source}
 
-    first_line = by_line.get(line)
-    if first_line is None:
+    if line not in by_line:
         # Linha ausente na fonte -- indecidivel, regra de desempate manda
         # DINAMICO.
         return True
 
-    # A varredura comeca no token OPEN, nao no inicio da linha fisica
-    # (correcao da 3a recorrencia da mesma classe de defeito, apontada por
-    # verificacao independente): PL/SQL permite mais de um statement na
-    # mesma linha fisica -- `v_sql := '...' || p_x; OPEN c FOR v_sql;` e
-    # idioma comum -- e cortar no PRIMEIRO ";" da linha inteira fazia o
-    # corte cair no statement ANTERIOR ao OPEN, "provando" estatico um ref
-    # cursor dinamico. Ancorar no OPEN garante que o ";" procurado e o que
-    # FECHA o proprio OPEN. Se houver mais de um OPEN na linha, usamos o
-    # ULTIMO cujo ";" de fechamento ainda esta a frente -- na duvida (OPEN
-    # nao encontrado como token, ex.: linha divergente da posicao que o
-    # PL/Scope reportou), indecidivel -> DINAMICO.
-    open_match = None
-    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_\$#]*", first_line):
-        if match.group(0).upper() == "OPEN":
-            open_match = match
-            # nao da break: statement do PL/Scope e o da linha `line`, e se
-            # ha dois OPEN na mesma linha o segundo tambem comeca ali --
-            # qualquer um sem FOR proprio cai no desempate dinamico abaixo,
-            # entao ancorar no ultimo e o mais conservador que ainda decide.
-    if open_match is None:
+    # 1) COMENTARIO E LITERAL SAEM ANTES DE QUALQUER DECISAO.
+    #
+    # Reusa `lexical.strip_comments_and_literals`, o mesmo utilitario que
+    # `depgraph_enrich` ja usa para analise textual de SQL -- em vez de
+    # varrer texto bruto, que era a causa de duas recorrencias:
+    # `-- OPEN done;` num comentario a direita virava uma ancora falsa, e
+    # um ";" ou "FOR" dentro de string literal cortava/decidia no lugar
+    # errado. Passamos a JANELA inteira de uma vez porque comentario de
+    # bloco atravessa linha.
+    raw_window = []
+    for offset in range(_OPEN_SOURCE_WINDOW):
+        text = by_line.get(line + offset)
+        if text is None:
+            break
+        raw_window.append(text)
+    if not raw_window:
         return True
 
-    window_parts = [first_line[open_match.start():]]
-    closed = ";" in window_parts[0]
-    if not closed:
-        for offset in range(1, _OPEN_SOURCE_WINDOW):
-            text = by_line.get(line + offset)
-            if text is None:
-                break
-            window_parts.append(text)
-            if ";" in text:
-                closed = True
-                break
+    clean_window, _literals = lexical.strip_comments_and_literals(raw_window)
+    clean_first = clean_window[0] if clean_window else ""
 
-    if not closed:
+    # 2) AMBIGUIDADE NAO SE RESOLVE POR PALPITE -- SE NAO DA PARA SABER,
+    #    E DINAMICO.
+    #
+    # PL/Scope reporta LINHA, nunca coluna. Com dois `OPEN` na mesma linha
+    # fisica (`OPEN c1 FOR v_sql; OPEN c2;`) os dois statements chegam aqui
+    # com o MESMO `line`, e nao existe informacao que diga qual deles esta
+    # sendo classificado. As tres correcoes anteriores desta funcao tentaram
+    # escolher um (primeiro `;` da linha, depois ancora no ultimo `OPEN`) --
+    # e cada escolha errou num cenario diferente, sempre para o lado
+    # INSEGURO (dinamico virando NO_DATA_DEP, sumindo de PONTOS CEGOS).
+    #
+    # A licao das recorrencias: o defeito nunca foi QUAL palpite, foi
+    # PALPITAR. Quando a entrada e genuinamente ambigua, a unica resposta
+    # correta e a regra de desempate do contrato -- DINAMICO. Perde-se a
+    # prova de "estatico" em linhas com dois OPEN (raras); em troca, nenhum
+    # ref cursor dinamico pode desaparecer por escolha errada de ancora.
+    open_positions = [
+        match.start()
+        for match in _WORD_RE.finditer(clean_first)
+        if match.group(0).upper() == "OPEN"
+    ]
+    if len(open_positions) != 1:
+        # zero  -> a linha nao tem OPEN fora de comentario/literal: fonte
+        #          divergente da posicao reportada, indecidivel.
+        # 2+    -> impossivel saber qual statement e este (ver acima).
+        return True
+
+    # 3) So agora, com UM unico OPEN em texto limpo, a decisao e determinada.
+    window_text = "".join(clean_window)[open_positions[0]:]
+    if ";" not in window_text:
         # Statement nao fecha dentro da janela -- indecidivel, DINAMICO.
         return True
 
-    before_semicolon = "".join(window_parts).split(";", 1)[0]
+    before_semicolon = window_text.split(";", 1)[0]
     tokens = _WORD_RE.findall(before_semicolon.upper())
     return "FOR" in tokens
 

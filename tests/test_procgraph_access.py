@@ -510,6 +510,73 @@ def test_open_multiline_for_after_shared_first_line_is_dynamic():
     assert edges[0].edge_type == "DYNAMIC_SQL"
 
 
+def _open_edge_type(source_lines: Dict[int, str], line: int = 42) -> str:
+    """Helper das regressoes de `_open_stmt_is_dynamic`: roda o seam sobre
+    um texto-fonte sintetico e devolve o edge_type resultante."""
+    statement = Assignment(
+        usage_id=3, line=line, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+    assert len(edges) == 1
+    return edges[0].edge_type
+
+
+def test_open_with_comment_mentioning_open_stays_dynamic():
+    # 4a recorrencia (verificacao independente, rodada 4), caso 1: um
+    # comentario a direita contendo a palavra OPEN criava uma ancora FALSA
+    # depois do ";" real, e o FOR verdadeiro ficava fora da janela -- o
+    # dinamico virava NO_DATA_DEP e sumia de PONTOS CEGOS. Comentario agora
+    # e removido ANTES de qualquer decisao (lexical.strip_comments_and_literals).
+    assert (
+        _open_edge_type({42: "OPEN v_cursor FOR v_sql; -- OPEN done, proceed;\n"})
+        == "DYNAMIC_SQL"
+    )
+
+
+def test_two_opens_on_same_line_is_indecidable_hence_dynamic():
+    # 4a recorrencia, caso 2: PL/Scope reporta LINHA, nunca coluna -- com
+    # dois OPEN na mesma linha fisica os dois statements chegam com o MESMO
+    # `line` e NAO ha informacao que diga qual esta sendo classificado.
+    # Escolher um (a versao anterior ancorava no ultimo) errava para o lado
+    # INSEGURO. Ambiguidade genuina resolve pela regra de desempate.
+    assert _open_edge_type({42: "OPEN c1 FOR v_sql; OPEN c2;\n"}) == "DYNAMIC_SQL"
+    # ordem inversa: continua indecidivel, continua dinamico
+    assert _open_edge_type({42: "OPEN c2; OPEN c1 FOR v_sql;\n"}) == "DYNAMIC_SQL"
+
+
+def test_open_with_semicolon_inside_string_literal_stays_dynamic():
+    # ";" dentro de literal nao pode cortar a janela antes do FOR real.
+    assert (
+        _open_edge_type({42: "OPEN c FOR 'SELECT 1; FROM dual' || v_x;\n"}) == "DYNAMIC_SQL"
+    )
+
+
+def test_open_with_for_only_inside_string_literal_is_not_proof_of_dynamic():
+    # Espelho do caso acima: um FOR que existe SO dentro de literal nao pode
+    # PROVAR dinamico. Literal removido, sobra `OPEN cur_x(...);` estatico.
+    assert _open_edge_type({42: "OPEN cur_x('FOR TESTING');\n"}) == "NO_DATA_DEP"
+
+
+def test_open_token_inside_identifier_is_not_an_anchor():
+    # `v_open`/`REOPEN` contem "open" como substring mas nao sao o token
+    # OPEN -- o regex de palavra ja protege; teste trava a garantia.
+    assert _open_edge_type({42: "v_open := 1; REOPEN := 2; OPEN c FOR v_sql;\n"}) == "DYNAMIC_SQL"
+
+
+def test_open_static_with_block_comment_before_it_stays_static():
+    # Comentario de bloco na mesma linha, antes do OPEN estatico: removido,
+    # a prova de estatico continua valendo (a correcao nao pode transformar
+    # todo OPEN comentado num falso dinamico).
+    assert _open_edge_type({42: "/* abre o cursor */ OPEN cur_pedidos;\n"}) == "NO_DATA_DEP"
+
+
 def test_open_without_source_capability_defaults_to_dynamic_opaque():
     # Cenario 3 (obrigatorio): fonte INDISPONIVEL -- regra de desempate,
     # indecidivel classifica DINAMICO (opaque), NUNCA NO_DATA_DEP. A
