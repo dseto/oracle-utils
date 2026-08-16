@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-08",
+  "contract": "depgraph-granular",
+  "desc": "O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto",
+  "files": [
+    "plsqlflow/procgraph_render.py",
+    "plsqlflow/cli.py",
+    "tests/test_procgraph_render.py",
+    "tests/test_cli_granular.py",
+    "docs/backlog-depgraph-pontos-cegos.md"
+  ],
+  "verify_cmd": "pytest tests/test_procgraph_render.py tests/test_cli_granular.py -q",
+  "recorded_at": "2026-08-16T15:27:53.388483+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:c6b97ac96741e389960de3d6f154038e18e8e6f877d7551aa5af665c38aec98d"
+}

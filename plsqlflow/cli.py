@@ -36,11 +36,11 @@ import json
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import oracledb
 
-from . import db, depgraph, depgraph_enrich, depgraph_render, extract, report, resolve
+from . import db, depgraph, depgraph_enrich, depgraph_render, extract, procgraph, procgraph_render, report, resolve
 from .graph import RootTarget
 
 
@@ -162,6 +162,152 @@ class DbDepExtractor:
         for chunk in extract.chunk_names(object_names):
             rows.extend(extract.fetch_source_batch(self._conn, owner, chunk))
         return rows
+
+
+# ==========================================================================
+# T-08 (contrato depgraph-granular): extractor de producao do Protocol
+# `procgraph.ProcExtractor`, usado pelo modo `depgraph --granular`.
+# ==========================================================================
+
+# Consulta pontual de `resolve_owner` (procgraph.py, secao "Resolucao
+# inter-package"): por `signature`, restrita a um conjunto de owners --
+# NUNCA um scan de ALL_IDENTIFIERS sem filtro (caro e pode cruzar schema
+# involuntariamente num banco grande, ver docstring de ProcDbExtractor
+# abaixo). Nao registrada em sql/flow/ nem em queries.py de proposito: T-08
+# so pode escrever plsqlflow/procgraph_render.py, plsqlflow/cli.py e testes
+# -- db.run_query aceita texto de query solto (nao exige passar por
+# queries.QUERY_TEXT), entao o texto mora aqui. Mesmo padrao de bind
+# :owner_list + INSTR ja usado por sql/flow/tab_columns.sql/
+# plscope_tree_batch.sql (lista separada por virgula, sem depender de IN
+# com aridade variavel).
+_RESOLVE_OWNER_SQL = """
+SELECT i.owner, i.object_name
+FROM   all_identifiers i
+WHERE  i.signature = :signature
+AND    i.usage IN ('DECLARATION', 'DEFINITION')
+AND    INSTR(',' || REPLACE(UPPER(:owner_list), ' ', '') || ',',
+             ',' || i.owner || ',') > 0
+"""
+
+# Heuristica de `object_wrapped` (T-04/T-08, decisao registrada em
+# procgraph.py e aqui): fonte PL/SQL *wrapped* (DBMS_DDL.WRAP) grava um
+# cabecalho reconhecivel nas primeiras linhas de ALL_SOURCE -- a palavra
+# "wrapped" aparece literalmente numa das duas primeiras linhas do texto
+# gerado pelo Oracle. Best-effort: um falso negativo aqui so degrada o
+# MOTIVO relatado no fallback de grao objeto (cai no motivo generico "sem
+# PL/Scope identifiers" em vez do especifico "wrapped") -- nunca quebra a
+# cobertura, porque a decisao "cai em fallback ou nao" continua vindo de
+# `has_identifiers` independente disto.
+_OBJECT_WRAPPED_SQL = """
+SELECT s.text
+FROM   all_source s
+WHERE  s.owner = :owner
+AND    s.name = :object_name
+AND    s.line <= 2
+ORDER  BY s.line
+"""
+
+
+class ProcDbExtractor:
+    """Extractor concreto do Protocol `procgraph.ProcExtractor` (T-08) sobre
+    uma conexao de verdade -- usado pelo modo `depgraph --granular`.
+    Implementa os QUATRO metodos OPCIONAIS do Protocol (`resolve_owner`/
+    `object_wrapped`/`triggers`/`source`) porque a producao PRECISA deles:
+    eles so sao opcionais do ponto de vista do Protocol/dos testes (fakes
+    podem omitir e cair em degradacao declarada) -- o extractor real do
+    CLI tem que oferecer os quatro, senao a travessia inter-package (ou a
+    classificacao de SQL dinamico, correcao do DEFEITO 1) degrada
+    silenciosamente (ver docstring de plsqlflow/procgraph_render.py, secao
+    "DEGRADACAO POR CAPACIDADE OPCIONAL AUSENTE").
+
+    `plscope_identifiers`/`plscope_statements` reusam as MESMAS queries em
+    lote do T-02 (`extract.fetch_plscope_tree_batch`/
+    `fetch_plscope_statements_batch`), com `object_list` de UM UNICO nome:
+    o motor fino (procgraph.py) pede objeto a objeto, na medida em que a
+    travessia os descobre -- nunca em lote adiantado (o proximo objeto so e
+    conhecido depois que uma CALL real aponta pra ele).
+
+    `resolve_owner`: ver `_RESOLVE_OWNER_SQL` acima para a consulta. O
+    ESCOPO de owners pesquisados cresce ORGANICAMENTE com a travessia --
+    comeca so com o(s) owner(s) da(s) raiz(es) e ganha um owner a mais toda
+    vez que um objeto DAQUELE owner e efetivamente lido (`plscope_
+    identifiers`/`plscope_statements`), nunca antes disso e nunca o schema
+    inteiro do banco (decisao de escala e correcao registrada no plano,
+    secao 3 do T-08: evita tanto o custo de um scan livre de
+    ALL_IDENTIFIERS quanto o risco de resolver para um schema que a
+    travessia nunca pretendia tocar). Uma CALL para um owner ainda fora do
+    escopo conhecido fica NAO-RESOLVIDA (no declarado, nunca omitida) ate
+    a travessia alcancar aquele owner por outro caminho -- degradacao
+    SEGURA (regra do contrato: "grao objeto declarado onde nao prova,
+    omissao nunca"), nunca um scan sem filtro.
+
+    Validado ao vivo (T-08, banco dev -- GESTAO.FLOW_DEMO): a consulta por
+    signature pode devolver DUAS linhas para o MESMO objeto (a da SPEC e a
+    do BODY, ex.: `PACKAGE` e `PACKAGE BODY`) -- este metodo deduplica por
+    (owner, object_name) e NUNCA assume linha unica.
+
+    `triggers` reusa `extract.fetch_triggers_any_status` -- mesmo fetcher
+    que `DbDepExtractor.triggers` acima usa (trigger desabilitado tambem e
+    dependencia estrutural real, mesma justificativa)."""
+
+    def __init__(self, conn, root_owners: Sequence[str] = ()) -> None:
+        self._conn = conn
+        self._known_owners = {o.upper() for o in root_owners if o}
+
+    def plscope_identifiers(self, owner: str, object_name: str) -> List[extract.PlscopeTreeRow]:
+        self._known_owners.add(owner.upper())
+        return extract.fetch_plscope_tree_batch(self._conn, owner, object_name)
+
+    def plscope_statements(self, owner: str, object_name: str) -> List[extract.PlscopeStatementBatchRow]:
+        self._known_owners.add(owner.upper())
+        return extract.fetch_plscope_statements_batch(self._conn, owner, object_name)
+
+    def resolve_owner(self, signature: str) -> Optional[Tuple[str, str]]:
+        owners = sorted(self._known_owners)
+        if not owners or not signature:
+            return None
+        rows = db.run_query(
+            self._conn,
+            _RESOLVE_OWNER_SQL,
+            {"owner_list": ",".join(owners), "signature": signature},
+        )
+        pairs = sorted(
+            {(str(row["OWNER"]).upper(), str(row["OBJECT_NAME"]).upper()) for row in rows}
+        )
+        if not pairs:
+            return None
+        # Duas linhas (SPEC + BODY) do MESMO objeto colapsam no mesmo par
+        # ja pelo `set` acima -- se sobrar mais de um par (owners/objetos
+        # DIFERENTES reivindicando a mesma signature, teoricamente possivel
+        # so por colisao de hash entre schemas distintos), a escolha
+        # deterministica (ordenada) e preferivel a uma excecao: melhor um
+        # alvo plausivel e declarado do que derrubar a travessia inteira
+        # por uma ambiguidade rara.
+        return pairs[0]
+
+    def object_wrapped(self, owner: str, object_name: str) -> bool:
+        rows = db.run_query(
+            self._conn, _OBJECT_WRAPPED_SQL, {"owner": owner.upper(), "object_name": object_name.upper()}
+        )
+        return any("WRAPPED" in str(row.get("TEXT") or "").upper() for row in rows)
+
+    def triggers(self, owner: str, table_names: Sequence[str]) -> List[extract.TriggerRow]:
+        table_names = list(table_names)
+        if not table_names:
+            return []
+        table_list = ",".join(sorted({n.upper() for n in table_names}))
+        return extract.fetch_triggers_any_status(self._conn, owner, table_list)
+
+    def source(self, owner: str, object_name: str) -> List[extract.FetchSourceRow]:
+        """Correcao do DEFEITO 1 (contrato depgraph-granular): texto-fonte
+        de ALL_SOURCE para `procgraph_access._dynamic_sql_edges` tentar
+        resolver/classificar SQL dinamico via `depgraph_enrich.
+        dynamic_sql_findings` (reusado sem alteracao). Reusa
+        `extract.fetch_source` -- mesmo fetcher que `DbDepExtractor.source`
+        ja usa no modo objeto (sem filtro de `object_type`: PACKAGE e
+        PACKAGE BODY vem juntos, mesmo comportamento ja validado pelo modo
+        objeto contra o banco dev)."""
+        return extract.fetch_source(self._conn, owner, object_name)
 
 
 def _parse_target(target: str) -> RootTarget:
@@ -326,6 +472,13 @@ EXIT_OK = 0
 EXIT_NEEDS_RECOMPILE = 3
 EXIT_INVALID_ROOT = 4
 EXIT_CONNECTION_ERROR = 5
+# T-08 (contrato depgraph-granular): reconciliacao de COBERTURA (secao 6 do
+# plano) que nao fecha -- so pode acontecer por bug de contrato futuro (ver
+# plsqlflow/procgraph_render.py::build_coverage), nunca em operacao normal,
+# mas o CLI tem que ter um exit code proprio para isso em vez de reusar um
+# dos codigos de erro de conexao/raiz acima (categoria de erro diferente:
+# integridade do resultado, nao entrada do usuario nem rede).
+EXIT_COVERAGE_ERROR = 6
 
 DEPGRAPH_SUBCOMMAND = "depgraph"
 
@@ -458,9 +611,24 @@ def build_depgraph_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_INDEX_SPLIT,
         help="limiar de nos acima do qual INDEX.md vira sumario (estatisticas, hubs "
         "e lista de particoes) em vez da lista completa, com o fechamento "
-        "transitivo movido para INDEX-<OWNER>.md por schema (default: {})".format(
-            DEFAULT_INDEX_SPLIT
-        ),
+        "transitivo movido para INDEX-<OWNER>.md por schema (default: {}) -- "
+        "so vale no modo objeto (sem --granular)".format(DEFAULT_INDEX_SPLIT),
+    )
+    # T-08 (contrato depgraph-granular): liga o motor novo, grao SUBPROGRAMA
+    # (plsqlflow/procgraph.py) no lugar do motor de grao OBJETO de sempre.
+    # SEM esta flag, nada muda -- parsing e saida ficam byte a byte
+    # identicos ao comportamento atual (ver depgraph_main). COM a flag,
+    # alvo de 3 partes (owner.objeto.subprograma) passa a ser aceito (e so
+    # entao) e a profundidade default vira TOTAL (sem cap implicito) --
+    # ver `_depgraph_granular_main`.
+    parser.add_argument(
+        "--granular",
+        action="store_true",
+        default=False,
+        help="grao SUBPROGRAMA (motor novo, procgraph.py) em vez de grao objeto: "
+        "aceita alvo owner.objeto.subprograma, atribui cada CALL/acesso ao "
+        "subprograma exato, profundidade total por default. Sem esta flag, "
+        "comportamento e saida identicos ao modo objeto de sempre.",
     )
     return parser
 
@@ -605,6 +773,185 @@ def _count_blind_spots(result: depgraph.DepGraphResult) -> int:
     return total
 
 
+# ==========================================================================
+# T-08 (contrato depgraph-granular): `depgraph --granular` -- motor novo,
+# grao SUBPROGRAMA. Funcao isolada (`_depgraph_granular_main`), chamada por
+# `depgraph_main` ANTES de qualquer linha do corpo antigo (ver la) -- exige
+# nao-regressao byte a byte do modo objeto sem a flag, entao o codigo de
+# baixo (o "corpo antigo") continua literalmente intocado.
+# ==========================================================================
+
+
+def _parse_depgraph_target_granular(target: str) -> Tuple[str, str, Optional[str]]:
+    """`owner.objeto` (2 partes, semeia a API publica inteira da spec) ou
+    `owner.objeto.subprograma` (3 partes, semeia so aquele subprograma) --
+    SO valido com `--granular` (plano, secao 5: "alvo de 3 partes implica
+    raiz-subprograma... Sem --granular, alvo de 3 partes continua ERRO no
+    modo objeto", que e exatamente o que `_parse_depgraph_target` acima
+    continua fazendo, intocado)."""
+    parts = [p.strip() for p in (target or "").split(".")]
+    if len(parts) == 2 and all(parts):
+        return parts[0].upper(), parts[1].upper(), None
+    if len(parts) == 3 and all(parts):
+        return parts[0].upper(), parts[1].upper(), parts[2].upper()
+    raise ValueError(
+        "alvo invalido para depgraph --granular: {!r}. Esperado owner.objeto ou "
+        "owner.objeto.subprograma".format(target)
+    )
+
+
+def _flag_explicitly_passed(argv: Sequence[str], *flag_names: str) -> bool:
+    """Detecta se algum de `flag_names` apareceu de verdade em `argv`
+    (`--flag valor` OU `--flag=valor`) -- usado SO pelo modo granular para
+    decidir se `--max-objects`/`--max-depth` foram passados pelo usuario ou
+    se so carregam o default numerico do parser (5000/20, compartilhado com
+    o modo objeto, ver `build_depgraph_arg_parser`). Nao da para usar
+    `args.max_objects != DEFAULT_MAX_OBJECTS` para isso: um usuario que
+    passasse `--max-objects 5000` explicitamente (coincidindo com o
+    default) seria lido como "nao passou" por engano. Inspecionar `argv`
+    bruto (em vez do namespace ja parseado) e o unico jeito honesto de
+    saber se a flag foi digitada -- e nao exige tocar no default
+    compartilhado do parser (que o teste `test_depgraph_parser_default_
+    flags` trava em 5000/20 para o modo objeto)."""
+    for token in argv:
+        head = token.split("=", 1)[0]
+        if head in flag_names:
+            return True
+    return False
+
+
+def _depgraph_granular_main(args: argparse.Namespace, argv: List[str]) -> int:
+    """Corpo do modo `--granular` (T-08). Espelha a estrutura de
+    `depgraph_main` (parse de alvo -> conecta -> valida raiz -> constroi
+    resultado -> renderiza -> resumo/exit code), mas com o motor de
+    subprograma (`procgraph.build_proc_graph` + `procgraph_render.
+    render_graph`) no lugar do motor de objeto."""
+    try:
+        roots = [_parse_depgraph_target_granular(t) for t in args.target]
+    except ValueError as exc:
+        print("erro: {}".format(exc), file=sys.stderr)
+        return EXIT_INVALID_ROOT
+
+    if len(roots) > 1 and not args.name:
+        print(
+            "erro: --name e obrigatorio com mais de uma raiz ({} informadas) -- "
+            "todas as raizes saem num grafo unico e precisam de um nome de "
+            "diretorio (ex.: --name modulo-financeiro)".format(len(roots)),
+            file=sys.stderr,
+        )
+        return EXIT_INVALID_ROOT
+
+    stop_schemas = _stop_schemas_from_arg(args.stop_schemas)
+
+    # Profundidade TOTAL por default no modo granular (plano, secoes 4 e
+    # 7): so vira cap quando o usuario passou a flag DE VERDADE na linha de
+    # comando -- ver docstring de `_flag_explicitly_passed` para o motivo
+    # de nao dar so para olhar `args.max_objects`/`args.max_depth`.
+    if _flag_explicitly_passed(argv, "--max-objects"):
+        max_objects = _effective_max_objects(args.max_objects)
+    else:
+        max_objects = None
+    max_depth = args.max_depth if _flag_explicitly_passed(argv, "--max-depth") else None
+
+    try:
+        conn = db.connect(alias=args.conn)
+    except db.ConnectionConfigError as exc:
+        print("erro de conexao: {}".format(exc), file=sys.stderr)
+        return EXIT_CONNECTION_ERROR
+    except oracledb.Error as exc:
+        print("erro de conexao (driver): {}".format(exc), file=sys.stderr)
+        return EXIT_CONNECTION_ERROR
+
+    try:
+        try:
+            dep_extractor = DbDepExtractor(conn)
+
+            missing = _missing_roots(dep_extractor, [(owner, name) for owner, name, _sub in roots])
+            if missing:
+                print(
+                    "erro: raiz(es) nao encontrada(s) (ALL_OBJECTS): {} -- "
+                    "confira o nome ou o privilegio de leitura".format(", ".join(missing)),
+                    file=sys.stderr,
+                )
+                return EXIT_INVALID_ROOT
+
+            root_owners = sorted({owner for owner, _name, _sub in roots})
+            proc_extractor = ProcDbExtractor(conn, root_owners=root_owners)
+
+            # `procgraph._normalize_root` distingue raiz de 2 partes (2-tupla,
+            # semeia a spec publica inteira) de raiz de 3 partes (3-tupla,
+            # semeia so o subprograma exato) SO PELO TAMANHO da tupla -- uma
+            # 3-tupla com `None` no ultimo elemento viraria a string literal
+            # "None" como subprograma (`str(None)`), nunca `None` de verdade.
+            # Por isso a normalizacao AQUI (nao dentro de procgraph.py,
+            # congelado) tem que montar uma 2-tupla quando `sub` e `None`.
+            proc_roots: List[Union[Tuple[str, str], Tuple[str, str, str]]] = [
+                (owner, name) if sub is None else (owner, name, sub) for owner, name, sub in roots
+            ]
+            result = procgraph.build_proc_graph(
+                proc_extractor,
+                proc_roots[0],
+                roots=proc_roots[1:] or None,
+                max_objects=max_objects,
+                max_depth=max_depth,
+                dep_extractor=dep_extractor,
+                stop_schemas=stop_schemas,
+            )
+        finally:
+            conn.close()
+    except db.ConnectionConfigError as exc:
+        print("erro de conexao: {}".format(exc), file=sys.stderr)
+        return EXIT_CONNECTION_ERROR
+    except oracledb.Error as exc:
+        print("erro de conexao (driver): {}".format(exc), file=sys.stderr)
+        return EXIT_CONNECTION_ERROR
+
+    root_refs = [
+        "{}.{}.{}".format(owner, name, sub) if sub else "{}.{}".format(owner, name)
+        for owner, name, sub in roots
+    ]
+    out_dir = Path(args.output) / (args.name if args.name else root_refs[0])
+
+    meta_params: Dict[str, Any] = {
+        "root_ref": ", ".join(root_refs),
+        "roots": root_refs,
+        "granular": True,
+        "stop_schemas": stop_schemas,
+        "max_objects": max_objects,
+        "max_depth": max_depth,
+        "capabilities": procgraph_render.capabilities_from_extractor(proc_extractor),
+    }
+
+    try:
+        procgraph_render.render_graph(result, out_dir, meta_params)
+    except procgraph_render.CoverageError as exc:
+        print(
+            "erro: reconciliacao de COBERTURA nao fechou -- grafo NAO gravado -- {}".format(exc),
+            file=sys.stderr,
+        )
+        return EXIT_COVERAGE_ERROR
+
+    blind_spots = len(set(result.blind_spots))
+    print(
+        "depgraph --granular {}: nos={} arestas={} pontos_cegos={} saida={}".format(
+            meta_params["root_ref"], len(result.nodes), len(result.edges), blind_spots, out_dir
+        )
+    )
+    if result.truncated:
+        print("aviso: grafo truncado -- {}".format(result.truncation_reason), file=sys.stderr)
+    if result.needs_recompile:
+        print(
+            "aviso: {} objeto(s) sem PL/Scope -- rode o modo objeto (sem --granular) sobre "
+            "esses refs para gerar recompile.sql (grafo parcial, gravado mesmo assim)".format(
+                len(result.needs_recompile)
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_NEEDS_RECOMPILE
+
+    return EXIT_OK
+
+
 def _missing_roots(extractor: "DbDepExtractor", roots: Sequence[Tuple[str, str]]) -> List[str]:
     """Devolve os `OWNER.OBJETO` de `roots` que nao existem em ALL_OBJECTS
     (T-05) -- checa TODAS as raizes antes de prosseguir, em vez de parar na
@@ -640,6 +987,14 @@ def depgraph_main(argv: Optional[List[str]] = None) -> int:
     mensagem em stderr + codigo de saida."""
     parser = build_depgraph_arg_parser()
     args = parser.parse_args(argv)
+
+    if args.granular:
+        # T-08: motor novo, grao SUBPROGRAMA -- corpo INTEIRAMENTE separado
+        # (ver `_depgraph_granular_main`). Tudo abaixo desta linha (o corpo
+        # original do modo objeto) fica intocado -- e a garantia de
+        # nao-regressao byte a byte do plano (secao 5: "Sem --granular,
+        # parsing, comportamento e saida IDENTICOS aos atuais").
+        return _depgraph_granular_main(args, argv if argv is not None else sys.argv[1:])
 
     try:
         roots = [_parse_depgraph_target(t) for t in args.target]

@@ -304,6 +304,27 @@ def render_edges_jsonl(edges: Sequence[DepEdge]) -> str:
 # --------------------------------------------------------------------------
 
 
+def _plscope_gap_label(node: Optional[DepNode]) -> str:
+    """Traduz as duas capacidades de PL/Scope (T-06, `DepNode.
+    plscope_identifiers`/`plscope_statements`) num motivo legivel para a
+    secao PONTOS CEGOS: sem isso, `needs_recompile` so listava o ref sem
+    dizer o que faltava, e um objeto so sem STATEMENTS:ALL (o caso que
+    este contrato existe pra pegar) ficava indistinguivel de um objeto sem
+    PL/Scope nenhum. `node` pode ser None se `needs_recompile` referenciar
+    um ref sem no correspondente em `result.nodes` (defensivo -- nao
+    deveria acontecer, mas nao pode virar KeyError num relatorio)."""
+    if node is None:
+        return "sem PL/Scope"
+    missing = []
+    if not node.plscope_identifiers:
+        missing.append("identifiers")
+    if not node.plscope_statements:
+        missing.append("statements")
+    if not missing:
+        return "sem PL/Scope"
+    return "falta " + " e ".join(missing)
+
+
 def _blind_spot_lines(result: DepGraphResult) -> List[str]:
     lines: List[str] = []
 
@@ -320,9 +341,10 @@ def _blind_spot_lines(result: DepGraphResult) -> List[str]:
 
     no_plscope = sorted(set(result.needs_recompile))
     if no_plscope:
+        nodes_by_ref = {_ref(n): n for n in result.nodes}
         lines.append("### Objetos sem PL/Scope")
         for ref in no_plscope:
-            lines.append("- {}".format(ref))
+            lines.append("- {} ({})".format(ref, _plscope_gap_label(nodes_by_ref.get(ref))))
         lines.append("")
 
     if result.truncated:

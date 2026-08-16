@@ -28,6 +28,10 @@ QUERY_NAMES = (
     "deps_direct_batch.sql",
     "plscope_statements_batch.sql",
     "fetch_source_batch.sql",
+    # Arvore crua de identificadores em lote (contrato depgraph-granular,
+    # T-02): usada pela atribuicao por subprograma (attribute.py, T-01) e
+    # pela BFS de subprogramas (procgraph.py, T-03).
+    "plscope_tree_batch.sql",
 )
 
 

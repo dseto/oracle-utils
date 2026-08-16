@@ -1,0 +1,15 @@
+{
+  "feature_id": "T-05",
+  "contract": "depgraph-granular",
+  "desc": "O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara",
+  "files": [
+    "plsqlflow/procgraph_access.py",
+    "tests/test_procgraph_access.py",
+    "plsqlflow/procgraph.py",
+    "plsqlflow/attribute.py"
+  ],
+  "verify_cmd": "pytest tests/test_procgraph_access.py -q",
+  "recorded_at": "2026-08-16T15:17:21.665032+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:671f59979320b5e9ad4ba4eb2898e1f14f8c1274b4558f4f9c52e7012debabd0"
+}

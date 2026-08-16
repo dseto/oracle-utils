@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `dotenv-conn`
+Contrato: `depgraph-granular`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,9 +8,14 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | CLI flow/depgraph le credenciais do .env do diretorio onde e invocado, ambiente real ganha do arquivo | done |
-| T-02 | run-query.ps1 aceita -Connection env e resolve credenciais de variaveis de ambiente ou .env, sem expor a senha | done |
-| T-03 | Testes live rodam sozinhos em maquina com .env preenchido, e a documentacao das skills ensina o formato | done |
+| T-01 | Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado | done |
+| T-02 | As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma | done |
+| T-03 | O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular | done |
+| T-04 | Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado | done |
+| T-05 | O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara | done |
+| T-06 | Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego | done |
+| T-07 | Toda referencia circular do processo aparece nomeada no mapa, em vez de virar um marcador solto de aresta | done |
+| T-08 | O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto | done |
 
 ## Última atualização
 
