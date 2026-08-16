@@ -13,7 +13,7 @@ Contrato: `depgraph-granular`
 | T-05 | O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara | done |
 | T-06 | Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego | done |
 | T-07 | Toda referencia circular do processo aparece nomeada no mapa, em vez de virar um marcador solto de aresta | done |
-| T-08 | O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto | pending |
+| T-08 | O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto | done |
 
 ## Última atualização
 
@@ -25,6 +25,7 @@ Contrato: `depgraph-granular`
 - 2026-08-16T01:13:30.521020+00:00 — T-04 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-04.json
 - 2026-08-16T01:13:34.930772+00:00 — T-05 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-05.json
 - 2026-08-16T01:13:40.349427+00:00 — T-07 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-07.json
+- 2026-08-16T01:39:43.900614+00:00 — T-08 verificado (exit_code 0) — .harness/evidence/depgraph-granular/T-08.json
 <!-- /harness:auto -->
 
 
