@@ -1,58 +1,133 @@
 {
-  "contract": "dotenv-conn",
-  "compiled_at": "2026-08-15T22:43:38.224468+00:00",
+  "contract": "depgraph-granular",
+  "compiled_at": "2026-08-16T00:04:38.319780+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
-      "Senha aparecer em stdout, em evidencia de teste, em log ou na linha de comando de um processo (visivel em process list) em qualquer implementacao -- parar e redesenhar, nao mitigar",
-      "Qualquer necessidade de DML/DDL ou de conexao real ao banco (o contrato e 100% offline; toda prova usa .env temporario e dry-run)",
-      "3 falhas consecutivas do mesmo verify_cmd",
-      "Teste existente fora da superficie declarada precisar de mudanca de assercao -- devolver ao humano, nao ampliar superficie por conta propria"
+      "Travessia nao terminar em fixture com ciclo (timeout do teste estourar) -- parar e redesenhar o visited-set, NUNCA aumentar o timeout nem por cap de profundidade para mascarar",
+      "Contadores da secao COBERTURA nao fecharem -- parar e achar a causa, NUNCA ajustar o numero para fechar",
+      "Precisar alterar plsqlflow/graph.py ou o modo flow (congelados por golden test do contrato plsqlflow-py) -- parar e devolver ao humano",
+      "Qualquer DDL/DML contra o banco (CREATE/ALTER/DROP/INSERT/UPDATE/DELETE) -- parar e pedir confirmacao explicita; as tarefas deste contrato sao somente-leitura",
+      "3 falhas consecutivas da mesma suite de teste -- parar"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "CLI flow/depgraph le credenciais do .env do diretorio onde e invocado, ambiente real ganha do arquivo",
+      "desc": "Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado",
       "files": [
-        "plsqlflow/db.py",
-        "tests/test_db_dotenv.py"
+        "plsqlflow/attribute.py",
+        "tests/test_attribute.py",
+        "tests/fixtures/plscope_tree.json"
       ],
-      "verify_cmd": "pytest tests/test_db_dotenv.py tests/test_plsqlflow_unit.py -q",
+      "verify_cmd": "pytest tests/test_attribute.py -q",
       "depends": [],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-02",
-      "desc": "run-query.ps1 aceita -Connection env e resolve credenciais de variaveis de ambiente ou .env, sem expor a senha",
+      "desc": "As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma",
       "files": [
-        "scripts/run-query.ps1",
-        "tests/test_run_query_env.py"
+        "sql/flow/plscope_tree_batch.sql",
+        "sql/flow/plscope_statements_batch.sql",
+        "plsqlflow/extract.py",
+        "tests/test_extract_plscope_tree.py"
       ],
-      "verify_cmd": "pytest tests/test_run_query_env.py -q",
+      "verify_cmd": "pytest tests/test_extract_plscope_tree.py -q",
       "depends": [],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-03",
-      "desc": "Testes live rodam sozinhos em maquina com .env preenchido, e a documentacao das skills ensina o formato",
+      "desc": "O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular",
       "files": [
-        "tests/conftest.py",
-        ".claude/skills/plsql-flow/SKILL.md",
-        ".claude/skills/oracle-dependency-graph/SKILL.md",
-        "CLAUDE.md",
-        ".gitignore"
+        "plsqlflow/procgraph.py",
+        "tests/test_procgraph_bfs.py",
+        "tests/fixtures/procgraph_demo.json"
       ],
-      "verify_cmd": "pytest -q -rs",
+      "verify_cmd": "pytest tests/test_procgraph_bfs.py -q",
       "depends": [
         "T-01",
         "T-02"
       ],
       "cwd": null,
-      "passes": true
+      "passes": false
+    },
+    {
+      "id": "T-04",
+      "desc": "Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado",
+      "files": [
+        "plsqlflow/procgraph.py",
+        "tests/test_procgraph_fallback.py"
+      ],
+      "verify_cmd": "pytest tests/test_procgraph_fallback.py -q",
+      "depends": [
+        "T-03"
+      ],
+      "cwd": null,
+      "passes": false
+    },
+    {
+      "id": "T-05",
+      "desc": "O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara",
+      "files": [
+        "plsqlflow/procgraph_access.py",
+        "tests/test_procgraph_access.py"
+      ],
+      "verify_cmd": "pytest tests/test_procgraph_access.py -q",
+      "depends": [
+        "T-03"
+      ],
+      "cwd": null,
+      "passes": false
+    },
+    {
+      "id": "T-06",
+      "desc": "Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego",
+      "files": [
+        "plsqlflow/depgraph.py",
+        "tests/test_depgraph_plscope_settings.py"
+      ],
+      "verify_cmd": "pytest tests/test_depgraph_plscope_settings.py -q",
+      "depends": [],
+      "cwd": null,
+      "passes": false
+    },
+    {
+      "id": "T-07",
+      "desc": "Toda referencia circular do processo aparece nomeada no mapa, em vez de virar um marcador solto de aresta",
+      "files": [
+        "plsqlflow/procgraph_cycles.py",
+        "tests/test_procgraph_cycles.py"
+      ],
+      "verify_cmd": "pytest tests/test_procgraph_cycles.py -q",
+      "depends": [
+        "T-03"
+      ],
+      "cwd": null,
+      "passes": false
+    },
+    {
+      "id": "T-08",
+      "desc": "O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto",
+      "files": [
+        "plsqlflow/procgraph_render.py",
+        "plsqlflow/cli.py",
+        "tests/test_procgraph_render.py",
+        "tests/test_cli_granular.py"
+      ],
+      "verify_cmd": "pytest tests/test_procgraph_render.py tests/test_cli_granular.py -q",
+      "depends": [
+        "T-03",
+        "T-04",
+        "T-05",
+        "T-07"
+      ],
+      "cwd": null,
+      "passes": false
     }
   ]
 }
