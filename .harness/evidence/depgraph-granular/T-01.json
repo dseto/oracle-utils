@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-01",
+  "contract": "depgraph-granular",
+  "desc": "Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado",
+  "files": [
+    "plsqlflow/attribute.py",
+    "tests/test_attribute.py",
+    "tests/fixtures/plscope_tree.json"
+  ],
+  "verify_cmd": "pytest tests/test_attribute.py -q",
+  "recorded_at": "2026-08-16T00:15:16.237751+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:305662bf7777fd16481666f8e1af5815d2e156591c6fe773b4b13a0619a8f347"
+}

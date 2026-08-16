@@ -30,7 +30,7 @@ sobrecargas de CALC_OVERLOAD resolvidas por signature distinta.
 
 ## [T-02] As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma
 
-- files: `sql/flow/plscope_tree_batch.sql`, `sql/flow/plscope_statements_batch.sql`, `plsqlflow/extract.py`, `tests/test_extract_plscope_tree.py`
+- files: `sql/flow/plscope_tree_batch.sql`, `sql/flow/plscope_statements_batch.sql`, `plsqlflow/extract.py`, `tests/test_extract_plscope_tree.py`, `plsqlflow/queries.py`
 - verify: `pytest tests/test_extract_plscope_tree.py -q`
 
 `plscope_tree_batch.sql` (novo): arvore crua de ALL_IDENTIFIERS para N objetos
@@ -130,7 +130,7 @@ TRG2 -> T1) que precisa TERMINAR com o ciclo declarado.
 
 ## [T-06] Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego
 
-- files: `plsqlflow/depgraph.py`, `tests/test_depgraph_plscope_settings.py`
+- files: `plsqlflow/depgraph.py`, `tests/test_depgraph_plscope_settings.py`, `plsqlflow/depgraph_render.py`
 - verify: `pytest tests/test_depgraph_plscope_settings.py -q`
 
 Correcao do defeito de omissao silenciosa: `_DepGraphEngine.has_plscope`

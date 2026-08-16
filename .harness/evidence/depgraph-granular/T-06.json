@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-06",
+  "contract": "depgraph-granular",
+  "desc": "Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego",
+  "files": [
+    "plsqlflow/depgraph.py",
+    "tests/test_depgraph_plscope_settings.py",
+    "plsqlflow/depgraph_render.py"
+  ],
+  "verify_cmd": "pytest tests/test_depgraph_plscope_settings.py -q",
+  "recorded_at": "2026-08-16T00:15:26.854950+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:5e3a12b7d62a097f601ee14d7a05f200c5d87690daa8cfd4ccb705af33f995ce"
+}

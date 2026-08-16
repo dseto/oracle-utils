@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-02",
+  "contract": "depgraph-granular",
+  "desc": "As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma",
+  "files": [
+    "sql/flow/plscope_tree_batch.sql",
+    "sql/flow/plscope_statements_batch.sql",
+    "plsqlflow/extract.py",
+    "tests/test_extract_plscope_tree.py",
+    "plsqlflow/queries.py"
+  ],
+  "verify_cmd": "pytest tests/test_extract_plscope_tree.py -q",
+  "recorded_at": "2026-08-16T00:15:25.125429+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:fde8570e4c4642365683c00e99b24a8be72d2a6183712fc4645468f7e7727128"
+}

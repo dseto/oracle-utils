@@ -133,6 +133,20 @@ class DepNode:
     por `add_trigger_phase`/`populate_table_columns` (decisao registrada
     la); None para nos que nao sao tabela ou cujas colunas nao foram
     buscadas.
+
+    `plscope_identifiers`/`plscope_statements` (T-06, contrato
+    depgraph-granular): as DUAS capacidades de PL/Scope reportadas
+    SEPARADAS -- `plscope` sozinho nao bastava porque um objeto podia ter
+    so `IDENTIFIERS:ALL` (sem `STATEMENTS:ALL`) e ainda assim ser marcado
+    coberto, enquanto `ALL_STATEMENTS` dele vinha vazio e todo acesso a
+    tabela/SQL dinamico sumia do grafo sem aviso (ver `has_plscope`).
+    `plscope` continua existindo como o resumo "cobertura completa"
+    (`plscope_identifiers and plscope_statements`) para nao quebrar quem
+    ja consome esse campo (ex.: `cli.py` pct_plscope); os dois campos
+    novos existem para quem precisa saber POR QUE um objeto incompleto
+    nao pode ser refinado. Default False -- objeto que nunca passou por
+    `has_plscope`/`_plscope_capabilities` (ex.: fronteira, TABLE) fica
+    coerente com `plscope=False`.
     """
 
     owner: str
@@ -147,6 +161,8 @@ class DepNode:
     last_ddl_time: Optional[Any] = None
     trigger_status: Optional[str] = None
     columns: Optional[List[TabColumnRow]] = None
+    plscope_identifiers: bool = False
+    plscope_statements: bool = False
 
 
 @dataclass
@@ -436,15 +452,42 @@ class _DepGraphEngine:
         last_ddl_time = ddl_times[-1] if ddl_times else None
         return object_type, status, last_ddl_time
 
-    def has_plscope(self, owner: str, name: str, object_type: str) -> bool:
+    def plscope_capabilities(self, owner: str, name: str, object_type: str) -> Tuple[bool, bool]:
+        """Devolve (tem_identifiers, tem_statements) SEPARADOS (T-06).
+
+        Defeito corrigido aqui: a versao antiga so checava
+        `IDENTIFIERS:ALL` e chamava isso de "tem PL/Scope". Um objeto
+        compilado so com `IDENTIFIERS:ALL` (sem `STATEMENTS:ALL`) tem
+        `ALL_STATEMENTS` vazio no banco -- ou seja, nenhum acesso a
+        tabela nem SQL dinamico dele e visivel a PL/Scope. Marcar esse
+        objeto como "coberto" fazia esses fatos sumirem do grafo em
+        silencio: sem entrar em `needs_recompile`, sem aparecer em
+        PONTOS CEGOS. As duas flags de `plscope_settings` (formato
+        confirmado contra o banco dev: "IDENTIFIERS:ALL, STATEMENTS:ALL",
+        virgula+espaco) tem que ser checadas e reportadas independentes
+        para que quem consome o resultado saiba exatamente o que falta.
+        """
         if object_type not in PLSQL_OBJECT_TYPES:
-            return False
+            return False, False
         rows = self.get_plscope(owner).get(name.upper(), [])
+        has_identifiers = False
+        has_statements = False
         for row in rows:
             settings = (row.plscope_settings or "").upper()
             if "IDENTIFIERS:ALL" in settings:
-                return True
-        return False
+                has_identifiers = True
+            if "STATEMENTS:ALL" in settings:
+                has_statements = True
+        return has_identifiers, has_statements
+
+    def has_plscope(self, owner: str, name: str, object_type: str) -> bool:
+        """Cobertura COMPLETA -- identifiers E statements. Mantido (mesmo
+        nome/assinatura) por compatibilidade com o unico chamador interno
+        (`_process_object`) e com a semantica que `DepNode.plscope` sempre
+        teve para quem consome o campo (ex.: pct_plscope de `cli.py`); ver
+        `plscope_capabilities` para as duas flags separadas."""
+        identifiers, statements = self.plscope_capabilities(owner, name, object_type)
+        return identifiers and statements
 
     def add_edge(self, from_ref: str, to_ref: str, edge_type: str, line: Optional[int] = None, **kwargs) -> bool:
         # Chave inclui `line` (T-04 fix): duas arestas READ/WRITE/
@@ -629,7 +672,13 @@ class _DepGraphEngine:
             return
 
         object_type, status, last_ddl_time = self.classify(cur_owner, cur_name, fallback_type)
-        plscope = self.has_plscope(cur_owner, cur_name, object_type)
+        # T-06: as duas capacidades vem separadas de plscope_capabilities();
+        # `plscope` (cobertura completa) so e True com as duas presentes --
+        # objeto so com IDENTIFIERS (sem STATEMENTS) ou vice-versa cai no
+        # `not plscope` abaixo e entra em needs_recompile, exatamente o
+        # comportamento que faltava antes desta correcao.
+        plscope_identifiers, plscope_statements = self.plscope_capabilities(cur_owner, cur_name, object_type)
+        plscope = plscope_identifiers and plscope_statements
         node = DepNode(
             owner=key[0],
             object_name=key[1],
@@ -638,6 +687,8 @@ class _DepGraphEngine:
             plscope=plscope,
             is_leaf=False,
             last_ddl_time=last_ddl_time,
+            plscope_identifiers=plscope_identifiers,
+            plscope_statements=plscope_statements,
         )
         self._annotate_trigger(key, node)
         self.nodes[key] = node

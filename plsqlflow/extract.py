@@ -61,6 +61,36 @@ class PlscopeStatementBatchRow:
     sql_id: Optional[str]
     has_into_record: Optional[str]
     text: Optional[str]
+    # Campos novos (contrato depgraph-granular, T-02) -- acrescentados no
+    # FIM, todos com default, de proposito: nenhum consumidor existente
+    # constroi esta dataclass posicionalmente (todos os usos em cli.py e nos
+    # testes sao por keyword), entao um campo novo com default nao quebra
+    # nada que ja compila. usage_id/usage_context_id sao o elo desta linha
+    # com a arvore de PlscopeTreeRow (mesmo usage_id/usage_context_id,
+    # arvore unica); object_type distingue PACKAGE de PACKAGE BODY, que
+    # compartilham o mesmo espaco de usage_id.
+    object_type: Optional[str] = None
+    usage_id: Optional[int] = None
+    usage_context_id: Optional[int] = None
+
+
+@dataclass
+class PlscopeTreeRow:
+    # Arvore crua de ALL_IDENTIFIERS em lote (contrato depgraph-granular,
+    # T-02, plscope_tree_batch.sql): fundacao da atribuicao por subprograma
+    # de plsqlflow/attribute.py (T-01). object_type e obrigatorio (nao so
+    # metadado): PACKAGE e PACKAGE BODY sao arvores separadas que
+    # compartilham o mesmo espaco de usage_id.
+    object_name: str
+    object_type: str
+    usage_id: int
+    usage_context_id: Optional[int]
+    line: int
+    col: int
+    name: str
+    type: str
+    usage: str
+    signature: Optional[str]
 
 
 @dataclass
@@ -217,6 +247,19 @@ def fetch_plscope_statements_batch(
     binds = {"owner": owner, "object_list": object_list}
     rows = db.run_query(conn, queries.QUERY_TEXT["plscope_statements_batch.sql"], binds)
     return [PlscopeStatementBatchRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_plscope_tree_batch(
+    conn, owner: str, object_list: Optional[str]
+) -> List[PlscopeTreeRow]:
+    # Mesmo padrao de fetch_plscope_statements_batch/fetch_deps_direct_batch
+    # acima: le a query central (queries.QUERY_TEXT), binda :owner/
+    # :object_list, tipa cada linha na dataclass correspondente. O chamador
+    # (plsqlflow/attribute.py, T-01) e quem fatia object_names grande com
+    # chunk_names -- esta funcao so faz UMA chamada.
+    binds = {"owner": owner, "object_list": object_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["plscope_tree_batch.sql"], binds)
+    return [PlscopeTreeRow(**_to_kwargs(row)) for row in rows]
 
 
 def fetch_source_batch(

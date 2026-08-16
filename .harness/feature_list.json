@@ -1,6 +1,6 @@
 {
   "contract": "depgraph-granular",
-  "compiled_at": "2026-08-16T00:04:38.319780+00:00",
+  "compiled_at": "2026-08-16T00:10:00.217094+00:00",
   "compiled_with_version": "0.34.0",
   "stop_conditions": {
     "typed": [],
@@ -24,7 +24,7 @@
       "verify_cmd": "pytest tests/test_attribute.py -q",
       "depends": [],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-02",
@@ -33,12 +33,13 @@
         "sql/flow/plscope_tree_batch.sql",
         "sql/flow/plscope_statements_batch.sql",
         "plsqlflow/extract.py",
-        "tests/test_extract_plscope_tree.py"
+        "tests/test_extract_plscope_tree.py",
+        "plsqlflow/queries.py"
       ],
       "verify_cmd": "pytest tests/test_extract_plscope_tree.py -q",
       "depends": [],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-03",
@@ -89,12 +90,13 @@
       "desc": "Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego",
       "files": [
         "plsqlflow/depgraph.py",
-        "tests/test_depgraph_plscope_settings.py"
+        "tests/test_depgraph_plscope_settings.py",
+        "plsqlflow/depgraph_render.py"
       ],
       "verify_cmd": "pytest tests/test_depgraph_plscope_settings.py -q",
       "depends": [],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-07",
