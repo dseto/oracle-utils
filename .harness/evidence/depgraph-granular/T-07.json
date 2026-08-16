@@ -7,7 +7,7 @@
     "tests/test_procgraph_cycles.py"
   ],
   "verify_cmd": "pytest tests/test_procgraph_cycles.py -q",
-  "recorded_at": "2026-08-16T02:24:44.292348+00:00",
+  "recorded_at": "2026-08-16T10:13:36.528879+00:00",
   "exit_code": 0,
   "files_hash": "sha256:86716307c08d2a87f2ad7aa7f1471c680ad02d9d7072c7da8d8352b110cc351d"
 }

@@ -71,7 +71,28 @@ modulo la, secao "Seam de acesso"). Tres entregas do contrato:
    `dep_extractor` so degrada "partial" para "opaque" com mais frequencia
    (nunca vira excecao, nunca omite).
 
-5. Correcao de DEFEITO BLOQUEANTE (relatorio de verificacao independente
+5. Correcao de DEFEITO 1 (relatorio de verificacao independente sobre
+   este mesmo contrato, contra schema REAL `GESTAO_OO`, banco 21c,
+   2026-08-16): `_is_dynamic_stmt_type` supunha que um `OPEN c FOR
+   v_sql;` (ref cursor DINAMICO) chegaria com `stmt_type` literal
+   'OPEN FOR' -- premissa NUNCA confirmada contra banco (a docstring
+   antiga ja dizia isso). Fato agora provado:
+   `GESTAO_OO.PKG_DYNAMIC_EVALUATOR`, PACKAGE BODY linha 29, fonte
+   literal `OPEN v_cursor FOR v_sql;` (v_sql montado por concatenacao
+   com `p_filtro_extra`/`p_ordenacao`, parametros de entrada -- SQL
+   dinamico do tipo mais perigoso) tem `ALL_STATEMENTS.TYPE` = `'OPEN'`
+   PURO, identico ao tipo de um `OPEN c;` ESTATICO (cursor ja declarado
+   com SELECT proprio). `ALL_STATEMENTS.TYPE` sozinho NUNCA vai
+   distinguir os dois -- so o TEXTO-FONTE pode (presenca de `FOR` depois
+   do `OPEN`, antes do `;` que fecha o statement). `_open_stmt_is_dynamic`
+   faz essa desambiguacao, reusando a mesma capacidade OPCIONAL `source`
+   que a entrega 4 (SQL dinamico) ja consome -- ver a funcao para a
+   REGRA DE DESEMPATE inegociavel (indecidivel -> DINAMICO, nunca
+   NO_DATA_DEP). `_table_access_edges` checa `stmt_type == "OPEN"` ANTES
+   de `_is_dynamic_stmt_type`/`_NO_DEPENDENCY_STMT_TYPES` para rotear
+   pelo caminho certo.
+
+6. Correcao de DEFEITO BLOQUEANTE (relatorio de verificacao independente
    sobre este mesmo contrato, 2026-08-16): ANTES desta correcao, um STMT
    cujo tipo nao fosse SELECT/INSERT/UPDATE/DELETE/MERGE nem dinamico
    virava `[]` incondicional (ver o comentario antigo, ainda citado por
@@ -103,11 +124,13 @@ modulo la, secao "Seam de acesso"). Tres entregas do contrato:
        `procgraph.py`), so deixa de disparar para o caso NORMAL de
        PL/SQL transacional/cursor explicito.
 
-   `OPEN` estatico (sem "FOR") entra na familia (a); `OPEN ... FOR`
-   dinamico (cursor aberto com SQL montado em runtime) continua caindo
-   no ramo de SQL dinamico ACIMA -- `_is_dynamic_stmt_type` foi ajustada
-   para distinguir os dois (ver docstring da funcao) precisamente para
-   que esta entrega NUNCA engula o caso dinamico.
+   `OPEN` ESTATICO (fonte prova que fecha sem "FOR") entra na familia
+   (a); `OPEN` DINAMICO (fonte com "FOR", OU indecidivel -- ver DEFEITO 1
+   acima e `_open_stmt_is_dynamic`) cai no ramo de SQL dinamico ACIMA --
+   `stmt_type == "OPEN"` e tratado ANTES desta lista, com desambiguacao
+   por texto-fonte, precisamente para que esta entrega NUNCA engula o
+   caso dinamico (a versao anterior deste modulo confiava so no literal
+   `stmt_type`, premissa que o DEFEITO 1 provou errada).
 
 Duas FORMAS de chamada, ambas vindo do mesmo seam (`kwargs["statement"]`
 distingue -- ver `procgraph.py::_process_stmt`, que agora chama duas
@@ -146,6 +169,7 @@ para reusar aqui de qualquer forma.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .depgraph_enrich import UNKNOWN_TARGET, dynamic_sql_findings
@@ -375,54 +399,121 @@ def _discover_triggers(
 
 
 def _is_dynamic_stmt_type(stmt_type: str) -> bool:
-    """EXECUTE IMMEDIATE exato, OPEN ... FOR (cursor dinamico) ou qualquer
-    variante de DBMS_SQL.PARSE/.OPEN_CURSOR.
+    """EXECUTE IMMEDIATE exato, qualquer variante de DBMS_SQL.PARSE/
+    .OPEN_CURSOR, ou um `stmt_type` que JA carregue "FOR" no proprio texto
+    (ex.: hipotetico "OPEN FOR" literal, nunca confirmado em Oracle real --
+    ver DEFEITO 1 abaixo).
 
-    Ajustada (correcao do DEFEITO BLOQUEANTE, ver secao 5 da docstring do
-    modulo) para distinguir OPEN ESTATICO de OPEN DINAMICO -- os dois
-    comecam com o mesmo prefixo "OPEN", mas so o dinamico carrega "FOR"
-    no proprio `stmt_type`.
+    NAO decide o caso normal de `stmt_type == "OPEN"` puro -- esse e
+    tratado ANTES desta funcao, em `_table_access_edges`, via
+    `_open_stmt_is_dynamic` (desambiguacao por texto-fonte). O branch
+    `startswith("OPEN") and upper != "OPEN"` abaixo so sobra como rede de
+    seguranca defensiva para um `stmt_type` que JA venha com sufixo
+    (nunca observado contra banco real, mas inofensivo manter).
 
-    ORIGEM DESSA PREMISSA, E O RISCO QUE ELA CARREGA: o literal exato
-    "OPEN FOR" vem de `report.py::DYNSQL_STMT_TYPES`, constante que ja
-    existia no repo para o mesmo proposito. NAO foi confirmado contra
-    banco: nenhum schema acessivel nesta maquina tem um unico statement
-    do tipo OPEN (`SELECT type, COUNT(*) FROM all_statements WHERE
-    owner='GESTAO' GROUP BY type` devolve so EXECUTE IMMEDIATE e INSERT).
-    Se algum release do Oracle emitir `type='OPEN'` (sem o FOR) para
-    abertura de ref cursor DINAMICO, este ramo classifica errado.
-    Consequencia limitada e deliberada: o statement vai para
-    `_NO_DEPENDENCY_STMT_TYPES`, onde ainda ganha aresta marcadora e
-    entra contado e visivel na COBERTURA -- ele NAO some (a regra
-    inegociavel do contrato continua valendo). O que se perde e a entrada
-    em PONTOS CEGOS, ou seja, quem migra nao seria avisado de que ha SQL
-    dinamico ali. Conferir contra um schema real que use ref cursor
-    dinamico antes de tratar esta premissa como fato.
-
-    Antes desta correcao, `startswith("OPEN")` sozinho
-    tambem capturava `OPEN` estatico (abertura de um cursor JA declarado
-    com SELECT proprio, sem SQL novo nenhum) -- o que o rotearia para
-    `_dynamic_sql_edges` em vez do balde correto de "sem dependencia de
-    dados por natureza" (`_NO_DEPENDENCY_STMT_TYPES`). Mesmo criterio de
-    `depgraph_enrich._looks_dynamic_stmt_type` (simbolo privado de outro
-    modulo -- duplicado aqui em vez de importado, mesma razao ja
-    documentada na docstring do modulo) para EXECUTE IMMEDIATE/DBMS_SQL;
-    so o ramo OPEN foi apertado."""
+    HISTORICO DA PREMISSA CORRIGIDA (DEFEITO 1, relatorio de verificacao
+    independente sobre este mesmo contrato, contra schema REAL
+    `GESTAO_OO`, banco Oracle 21c, 2026-08-15/16): a versao anterior desta
+    funcao supunha que um `OPEN c FOR v_sql;` DINAMICO chegaria com
+    `stmt_type` literal "OPEN FOR" (premissa copiada de
+    `report.py::DYNSQL_STMT_TYPES`, e a docstring antiga ja avisava:
+    "NAO foi confirmado contra banco... conferir contra um schema real
+    antes de tratar esta premissa como fato"). Agora conferida contra
+    banco real: `GESTAO_OO.PKG_DYNAMIC_EVALUATOR`, PACKAGE BODY linha 29,
+    `OPEN v_cursor FOR v_sql;` (SQL dinamico de verdade, `v_sql` montado
+    por concatenacao com parametro de entrada) tem `ALL_STATEMENTS.TYPE`
+    = `'OPEN'` PURO -- SEM "FOR" nenhum, identico ao tipo de um
+    `OPEN c;` ESTATICO. A premissa estava ERRADA: `ALL_STATEMENTS.TYPE`
+    sozinho NUNCA distingue os dois casos de OPEN; so o texto-fonte pode
+    (ver `_open_stmt_is_dynamic`)."""
     upper = (stmt_type or "").upper().strip()
     if upper == "EXECUTE IMMEDIATE":
         return True
     if upper.startswith("OPEN") and upper != "OPEN":
-        # "OPEN FOR" (ou qualquer variante "OPEN <algo>") e dinamico;
-        # "OPEN" sozinho e cursor ESTATICO -- ver `_NO_DEPENDENCY_STMT_TYPES`.
+        # Rede de seguranca defensiva -- ver docstring acima. `stmt_type`
+        # puro "OPEN" NUNCA cai aqui (tratado antes, por texto-fonte).
         return True
     if "DBMS_SQL" in upper:
         return True
     return False
 
 
+# Janela de linhas (a partir da linha do proprio statement, inclusive)
+# usada por `_open_stmt_is_dynamic` para procurar o fechamento (";") de um
+# `OPEN ...;` -- statement PL/SQL raramente quebra em mais de 2-3 linhas,
+# mas a janela e generosa (o custo de olhar linhas a mais e desprezivel,
+# e uma janela curta demais aumentaria falsos "indecidivel", que a regra
+# de desempate ja resolve para DINAMICO mesmo assim -- a janela so afeta
+# quantas vezes conseguimos provar ESTATICO com certeza).
+_OPEN_SOURCE_WINDOW = 6
+
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\$#]*")
+
+
+def _open_stmt_is_dynamic(
+    owner: str, object_name: str, line: Optional[int], extractor: Optional[Any]
+) -> bool:
+    """Desambigua `OPEN c;` ESTATICO (cursor ja declarado com SELECT
+    proprio) de `OPEN c FOR v_sql;` DINAMICO (ref cursor aberto com SQL
+    montado em runtime) usando o TEXTO-FONTE da linha do statement --
+    `ALL_STATEMENTS.TYPE` sozinho NUNCA distingue os dois (DEFEITO 1, ver
+    `_is_dynamic_stmt_type` para o fato confirmado contra banco real).
+
+    REGRA DE DESEMPATE, INEGOCIAVEL (mandato explicito do relatorio de
+    verificacao independente): quando NAO for possivel decidir --
+    `extractor` sem a capacidade OPCIONAL `source`, `line` ausente, fonte
+    que nao cobre a linha, ou o statement nao fecha (";") dentro da
+    janela de busca (`_OPEN_SOURCE_WINDOW`) -- devolve True (DINAMICO).
+
+    A falha e ASSIMETRICA, e essa assimetria e o motivo da regra: um
+    ponto cego A MAIS (um `OPEN` estatico classificado como
+    `DYNAMIC_SQL` opaque, aparecendo em PONTOS CEGOS por engano) e ruido
+    que uma pessoa descarta em segundos ao ler o texto do cursor. Um
+    ponto cego A MENOS (um `OPEN ... FOR` dinamico classificado como
+    `NO_DATA_DEP`, desaparecendo de PONTOS CEGOS) e SQL dinamico inteiro
+    ficando invisivel num mapa que sera usado para reescrever o processo
+    -- exatamente o DEFEITO 1. Entre as duas falhas possiveis, so a
+    primeira e aceitavel; por isso o default do "nao sei" e sempre
+    DINAMICO, nunca ESTATICO. So devolve False quando o fonte PROVA,
+    dentro da janela, que o statement fecha (";") sem nenhum "FOR" entre
+    "OPEN" e o fechamento."""
+    if extractor is None or not hasattr(extractor, "source") or not line:
+        return True
+    try:
+        source = list(extractor.source(owner, object_name) or [])
+    except Exception:
+        # Fonte e best-effort (mesma filosofia de `_discover_triggers`/
+        # `_dynamic_sql_edges`): falha na consulta nunca decide por
+        # ESTATICO -- regra de desempate manda DINAMICO.
+        return True
+    if not source:
+        return True
+
+    by_line: Dict[int, str] = {row.line: (row.text or "") for row in source}
+    window_parts: List[str] = []
+    closed = False
+    for offset in range(_OPEN_SOURCE_WINDOW):
+        text = by_line.get(line + offset)
+        if text is None:
+            break
+        window_parts.append(text)
+        if ";" in text:
+            closed = True
+            break
+
+    if not window_parts or not closed:
+        # Linha ausente na fonte, ou statement nao fecha dentro da janela
+        # -- indecidivel, regra de desempate manda DINAMICO.
+        return True
+
+    before_semicolon = "".join(window_parts).split(";", 1)[0]
+    tokens = _WORD_RE.findall(before_semicolon.upper())
+    return "FOR" in tokens
+
+
 # --------------------------------------------------------------------------
 # DEFEITO BLOQUEANTE (correcao): statement sem dependencia de dados por
-# natureza -- ver secao 5 da docstring do modulo.
+# natureza -- ver secao 6 da docstring do modulo.
 # --------------------------------------------------------------------------
 
 # Duas familias, cada uma com o PORQUE registrado:
@@ -435,14 +526,16 @@ def _is_dynamic_stmt_type(stmt_type: str) -> bool:
 #    dado, so o controla).
 #
 # 2. CONTROLE DE CURSOR ESTATICO (OPEN/FETCH/CLOSE -- `stmt_type`
-#    literalmente "OPEN", nunca "OPEN FOR"; ver `_is_dynamic_stmt_type`
-#    para o motivo de OPEN dinamico nunca chegar aqui): o SELECT do
-#    cursor ja foi registrado como STATEMENT proprio na DECLARACAO dele
-#    (`CURSOR c IS SELECT ...`) -- esse SELECT sim gera READ normalmente,
-#    pela mesma `_table_access_edges` (entrega 1 acima). OPEN/FETCH/CLOSE
-#    so movem o ponteiro de um cursor JA aberto -- reafirmar a mesma
-#    tabela como dependencia de novo duplicaria a informacao, nunca
-#    completaria.
+#    literalmente "OPEN" para os dois casos, estatico e dinamico; ver
+#    DEFEITO 1 e `_open_stmt_is_dynamic` para a desambiguacao por
+#    texto-fonte que decide QUANDO um "OPEN" chega aqui -- so quando a
+#    fonte PROVA que fecha sem "FOR"; indecidivel ou dinamico nunca
+#    chegam neste balde): o SELECT do cursor ja foi registrado como
+#    STATEMENT proprio na DECLARACAO dele (`CURSOR c IS SELECT ...`) --
+#    esse SELECT sim gera READ normalmente, pela mesma
+#    `_table_access_edges` (entrega 1 acima). OPEN/FETCH/CLOSE so movem
+#    o ponteiro de um cursor JA aberto -- reafirmar a mesma tabela como
+#    dependencia de novo duplicaria a informacao, nunca completaria.
 _NO_DEPENDENCY_STMT_TYPES = (
     "COMMIT",
     "ROLLBACK",
@@ -478,7 +571,7 @@ def _no_dependency_edge(
     `_NO_DEPENDENCY_STMT_TYPES` -- prova para `procgraph_render.
     build_coverage` que o statement foi CONTADO e esta VISIVEL, mesmo sem
     nenhum READ/WRITE real (nao ha dado nenhum para apontar, por
-    natureza do statement -- ver secao 5 da docstring do modulo). `op`
+    natureza do statement -- ver secao 6 da docstring do modulo). `op`
     carrega o `stmt_type` exato (COMMIT/ROLLBACK/FETCH/etc.), mesma
     convencao de `WRITE.op`, para quem ler `edges.jsonl`/o node .md saber
     qual statement gerou a aresta."""
@@ -608,13 +701,25 @@ def _table_access_edges(
 ) -> List[Any]:
     stmt_type = (getattr(statement, "target", None) or "").upper()
 
+    if stmt_type == "OPEN":
+        # DEFEITO 1 (correcao): `stmt_type` puro "OPEN" nao distingue
+        # cursor ESTATICO de DINAMICO (ver `_open_stmt_is_dynamic`) --
+        # decidido por texto-fonte ANTES de qualquer outra classificacao,
+        # regra de desempate embutida na propria funcao (indecidivel ->
+        # DINAMICO).
+        if _open_stmt_is_dynamic(owner, object_name, getattr(statement, "line", None), extractor):
+            return _dynamic_sql_edges(
+                owner, object_name, subprogram, statement, object_cache, extractor, dep_extractor, proc_edge_cls
+            )
+        return [_no_dependency_edge(owner, object_name, subprogram, statement, stmt_type, proc_edge_cls)]
+
     if _is_dynamic_stmt_type(stmt_type):
         return _dynamic_sql_edges(
             owner, object_name, subprogram, statement, object_cache, extractor, dep_extractor, proc_edge_cls
         )
 
     if stmt_type in _NO_DEPENDENCY_STMT_TYPES:
-        # Correcao do DEFEITO BLOQUEANTE (secao 5 da docstring do modulo):
+        # Correcao do DEFEITO BLOQUEANTE (secao 6 da docstring do modulo):
         # tipo SEM dependencia de dados POR NATUREZA (controle
         # transacional ou cursor ESTATICO) -- aresta marcadora
         # `NO_DATA_DEP`, nunca `[]`. Distinto do ramo abaixo: aqui o tipo

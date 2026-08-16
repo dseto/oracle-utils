@@ -271,7 +271,13 @@ def _no_dep_cache() -> SimpleNamespace:
         "SAVEPOINT",
         "SET TRANSACTION",
         "LOCK TABLE",
-        "OPEN",
+        # "OPEN" DELIBERADAMENTE fora desta lista (correcao do DEFEITO 1):
+        # ao contrario dos demais tipos aqui, "OPEN" puro NAO tem
+        # classificacao incondicional -- exige desambiguacao por
+        # texto-fonte (ver `_open_stmt_is_dynamic` e os testes na secao
+        # "entrega 5-B" abaixo, incluindo o caso SEM extractor, que agora
+        # cai em DYNAMIC_SQL opaque, nunca NO_DATA_DEP -- regra de
+        # desempate).
         "FETCH",
         "CLOSE",
     ],
@@ -307,11 +313,11 @@ def test_genuinely_unknown_statement_type_still_returns_empty():
 
 
 def test_open_for_dynamic_never_falls_into_no_dependency_bucket():
-    # CUIDADO explicito do relatorio: OPEN ... FOR (cursor dinamico) e SQL
-    # dinamico, tratado no ramo de cima -- a lista nova (OPEN estatico)
-    # nao pode engolir este caso. stmt_type real confirmado contra o
-    # banco dev (report.py::DYNSQL_STMT_TYPES) e "OPEN FOR", distinto do
-    # "OPEN" estatico (sem "FOR").
+    # Rede de seguranca defensiva: SE algum dia `stmt_type` chegar com um
+    # literal "OPEN FOR" (nunca observado contra banco real -- ver DEFEITO
+    # 1 abaixo, o caso NORMAL e `stmt_type == "OPEN"` puro, desambiguado
+    # por texto-fonte), `_is_dynamic_stmt_type` ainda o trata como
+    # dinamico -- nunca cai no balde novo (OPEN estatico).
     statement = Assignment(usage_id=3, line=9, kind="STMT", target="OPEN FOR", enclosing="P")
     cache = SimpleNamespace(body_identifiers=_no_dep_cache().body_identifiers, body_type="PACKAGE BODY", body_statements=[])
 
@@ -322,6 +328,162 @@ def test_open_for_dynamic_never_falls_into_no_dependency_bucket():
     assert len(edges) == 1
     assert edges[0].edge_type == "DYNAMIC_SQL"
     assert edges[0].edge_type != "NO_DATA_DEP"
+
+
+# --------------------------------------------- entrega 5-B (DEFEITO 1, OPEN puro)
+#
+# FATO confirmado ao vivo contra `GESTAO_OO.PKG_DYNAMIC_EVALUATOR` (Oracle
+# 21c real): `ALL_STATEMENTS.TYPE` para `OPEN v_cursor FOR v_sql;` (SQL
+# dinamico, `v_sql` montado por concatenacao com parametro de entrada) e
+# `'OPEN'` PURO -- identico ao tipo de um `OPEN c;` ESTATICO. A premissa
+# anterior (`stmt_type` viria como "OPEN FOR") nunca foi confirmada contra
+# banco real -- estava ERRADA. A desambiguacao correta usa o TEXTO-FONTE:
+# presenca de "FOR" entre "OPEN" e o ";" que fecha o statement.
+#
+# Os tres cenarios abaixo sao os tres obrigatorios do relatorio de
+# verificacao independente: (1) fonte com FOR -> DYNAMIC_SQL; (2) fonte
+# sem FOR -> NO_DATA_DEP; (3) fonte INDISPONIVEL -> DYNAMIC_SQL opaque
+# (regra de desempate -- indecidivel classifica DINAMICO, nunca
+# NO_DATA_DEP).
+
+
+def _open_cache() -> SimpleNamespace:
+    identifiers = [
+        IdentifierRow(1, 0, 1, 1, "PKG_DYNAMIC_EVALUATOR", "PACKAGE", "DEFINITION"),
+        IdentifierRow(2, 1, 3, 1, "FN_ABRIR_CURSOR_DINAMICO", "PROCEDURE", "DEFINITION", "SIG_FN"),
+    ]
+    return SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY", body_statements=[])
+
+
+class _OpenSourceExtractor:
+    """Fake minimo com SO a capacidade `source` -- mesmo padrao de
+    `_SourceExtractor` acima, reusado aqui para alimentar
+    `_open_stmt_is_dynamic` com um texto-fonte sintetico controlado."""
+
+    def __init__(self, lines_by_number: Dict[int, str]) -> None:
+        self._lines = lines_by_number
+
+    def source(self, owner: str, object_name: str) -> List[extract.FetchSourceRow]:
+        return [
+            extract.FetchSourceRow(type="PACKAGE BODY", line=line, text=text)
+            for line, text in sorted(self._lines.items())
+        ]
+
+
+def test_open_with_for_in_source_is_dynamic_sql():
+    # Cenario 1 (obrigatorio): OPEN c FOR v_sql; -- fonte PROVA dinamico.
+    statement = Assignment(
+        usage_id=3, line=29, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {29: "OPEN v_cursor FOR v_sql;\n"}
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].edge_type != "NO_DATA_DEP"
+
+
+def test_open_without_for_in_source_is_no_dependency():
+    # Cenario 2 (obrigatorio): OPEN c; estatico -- fonte PROVA que fecha
+    # sem "FOR", cursor ja declarado com SELECT proprio.
+    statement = Assignment(
+        usage_id=3, line=29, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {29: "OPEN v_cursor;\n"}
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "NO_DATA_DEP"
+    assert edges[0].op == "OPEN"
+
+
+def test_open_without_source_capability_defaults_to_dynamic_opaque():
+    # Cenario 3 (obrigatorio): fonte INDISPONIVEL -- regra de desempate,
+    # indecidivel classifica DINAMICO (opaque), NUNCA NO_DATA_DEP. A
+    # falha e assimetrica: um ponto cego a mais e ruido descartavel; um
+    # ponto cego a menos e SQL dinamico invisivel.
+    statement = Assignment(
+        usage_id=3, line=29, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=None,  # sem capacidade `source` nenhuma
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].confidence == "opaque"
+    assert edges[0].edge_type != "NO_DATA_DEP"
+
+
+def test_open_multiline_statement_with_for_on_second_line_is_dynamic():
+    # Statement pode quebrar em mais de uma linha -- a janela de busca
+    # (`_OPEN_SOURCE_WINDOW`) cobre isso; "FOR" aparece so na 2a linha,
+    # antes do ";" que fecha na 3a.
+    statement = Assignment(
+        usage_id=3, line=29, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {
+        29: "OPEN v_cursor\n",
+        30: "  FOR v_sql\n",
+        31: "  || p_filtro_extra;\n",
+    }
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+
+
+def test_open_statement_that_never_closes_within_window_defaults_to_dynamic():
+    # Statement nao fecha (sem ";") dentro da janela de busca -- tambem
+    # indecidivel, mesma regra de desempate do cenario 3.
+    statement = Assignment(
+        usage_id=3, line=29, kind="STMT", target="OPEN", enclosing="FN_ABRIR_CURSOR_DINAMICO"
+    )
+    source_lines = {ln: "  -- comentario sem fechamento\n" for ln in range(29, 40)}
+    source_lines[29] = "OPEN v_cursor\n"
+
+    edges = expand_access(
+        owner="GESTAO_OO",
+        object_name="PKG_DYNAMIC_EVALUATOR",
+        subprogram="FN_ABRIR_CURSOR_DINAMICO",
+        statement=statement,
+        object_cache=_open_cache(),
+        extractor=_OpenSourceExtractor(source_lines),
+    )
+
+    assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].confidence == "opaque"
 
 
 # --------------------------------------------------------------- entrega 2

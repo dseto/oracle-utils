@@ -22,7 +22,7 @@ SECAO 6 DO PLANO -- COBERTURA E OBRIGACAO DE PROVA, NAO RELATORIO
 chama primeiro, mkdir/escrita so depois) e LEVANTA `CoverageError` -- nunca
 "conserta" um contador -- quando uma das QUATRO somas nao fecha:
 
-    objetos alcancados = grao subprograma + grao objeto (por motivo) + folhas de fronteira
+    objetos alcancados = grao subprograma + grao objeto (rebaixado/sem PL-SQL/fronteira) + nao resolvidas
     calls por objeto    = atribuidas a subprograma + atribuidas a __INIT__/__SPEC__ + nao atribuidas (arestas)
     statements lidos    = atribuidos a subprograma + atribuidos a __INIT__/__SPEC__ + sem dependencia por natureza (cada um com aresta ou ponto cego -- nunca so "[]")
     statements malformados = nenhuma aresta nao-CALL com from_ref fora do formato esperado
@@ -181,14 +181,18 @@ DECISOES REGISTRADAS FORA DO TEXTO LITERAL DA TAREFA
 ============================================================================
 
 - `recompile.sql` (existe no modo objeto, `depgraph_render.py`) NAO e
-  gerado aqui: `ProcNode` nao carrega `object_type` (ao contrario de
-  `DepNode`), entao nao ha como montar o `ALTER <TIPO> ... COMPILE
-  PLSCOPE_SETTINGS=...` correto (PACKAGE precisa de duas linhas, TRIGGER de
-  uma, etc. -- ver `depgraph_render._recompile_statements`). Os refs de
-  `result.needs_recompile` continuam listados na secao COBERTURA (dado
-  visivel, nunca omitido); quem precisa do script pronto roda o modo
-  objeto (`python -m plsqlflow depgraph OWNER.OBJETO`, sem `--granular`)
-  sobre o mesmo ref -- o `recompile.sql` daquele modo cobre o mesmo objeto.
+  gerado aqui: monta-lo exigiria a sintaxe `ALTER <TIPO> ... COMPILE
+  PLSCOPE_SETTINGS=...` correta POR TIPO de objeto (PACKAGE precisa de
+  duas linhas, TRIGGER de uma, etc. -- ver
+  `depgraph_render._recompile_statements`), fora do escopo de prova desta
+  tarefa (DEFEITO 4 acrescentou `ProcNode.object_type`, mas so para nos
+  `grain="object"` -- nao universal como `DepNode.object_type`, e
+  implementar o gerador de script continua fora do escopo desta
+  correcao). Os refs de `result.needs_recompile` continuam listados na
+  secao COBERTURA (dado visivel, nunca omitido); quem precisa do script
+  pronto roda o modo objeto (`python -m plsqlflow depgraph OWNER.OBJETO`,
+  sem `--granular`) sobre o mesmo ref -- o `recompile.sql` daquele modo
+  cobre o mesmo objeto.
 - `--index-split` (particionamento de INDEX por owner, secao 7 do plano,
   "Escala") NAO e implementado nesta tarefa: o escopo de prova do T-08
   (Plans.md) lista COBERTURA + Ciclos + CLI + nao-regressao -- particao e
@@ -209,6 +213,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from . import __version__ as _PLSQLFLOW_VERSION
+from . import depgraph
 from .depgraph_render import sanitize_component
 from .procgraph import ProcEdge, ProcGraphResult, ProcNode
 from .procgraph_cycles import find_cycles
@@ -360,7 +365,31 @@ class CoverageReport:
     edges_trigger_fires: int
     objects_subprogram: int
     objects_object: int
+    # DEFEITO 4 (relatorio de verificacao independente, 2026-08-16): TRES
+    # baldes que a versao anterior misturava sob um so rotulo ("Rebaixados
+    # para grao objeto"), verdade sobre O QUE cada um conta:
+    #
+    # - `reasons`: objeto PL/SQL de verdade (object_type em
+    #   `depgraph.PLSQL_OBJECT_TYPES`) rebaixado para grao objeto por
+    #   falta de PL/Scope completo ou por ser *wrapped* -- o UNICO balde
+    #   onde "rebaixado" e uma resposta correta, e o UNICO onde a
+    #   pergunta "por que" se aplica. `note` sempre preenchido (correcao
+    #   do "sem motivo registrado" em 26 de 27 objetos, ver
+    #   `_ProcGraphEngine._object_grain_reason`/`_sync_fallback_results`).
+    # - `no_plsql_objects`: objeto SEM PL/SQL nenhum (TABLE/VIEW/SEQUENCE/
+    #   etc.) -- nunca foi candidato a grao subprograma, "rebaixado" nao
+    #   se aplica (achado ao vivo: GESTAO_OO.TB_PROJETOS apareceu sob
+    #   "Rebaixados", uma tabela nunca poderia ter sido).
+    # - `frontier_objects`: fronteira de schema (`ProcNode.is_frontier`,
+    #   owner em stop_schemas ou objeto com prefixo DBMS_/UTL_ -- ex.:
+    #   SYS.STANDARD, PUBLIC.DBMS_LOB, PUBLIC.DBMS_ASSERT) -- limite
+    #   DELIBERADO da travessia, nunca um rebaixamento; aparecia com
+    #   `(leaf)` na lista de nos ao mesmo tempo que a linha "objetos
+    #   alcancados" dizia "0 folhas de fronteira", contradicao que essa
+    #   separacao resolve (o numero real agora aparece aqui).
     reasons: List[str] = field(default_factory=list)
+    no_plsql_objects: List[str] = field(default_factory=list)
+    frontier_objects: List[str] = field(default_factory=list)
     unresolved_targets: List[str] = field(default_factory=list)
     needs_recompile: List[str] = field(default_factory=list)
     capabilities: Dict[str, Optional[bool]] = field(default_factory=dict)
@@ -554,15 +583,40 @@ def build_coverage(
     objects_subprogram = {(n.owner, n.object_name) for n in nodes if n.grain == "subprogram"}
     objects_object = {(n.owner, n.object_name) for n in nodes if n.grain == "object"}
 
-    reasons = sorted(
-        "{}.{}: {}".format(n.owner, n.object_name, n.note or "sem motivo registrado")
-        for n in nodes
-        if n.grain == "object"
-    )
+    # DEFEITO 4: TRES baldes para grain="object" -- ver docstring de
+    # `CoverageReport.reasons`/`no_plsql_objects`/`frontier_objects`.
+    # `ProcNode.object_type is None` (ex.: `ProcGraphResult` construido a
+    # mao em teste, sem passar por `_sync_fallback_results`) cai
+    # conservadoramente em `reasons` -- mesmo comportamento de ANTES desta
+    # correcao (nunca classifica errado por falta de dado, so por dado
+    # presente e claro).
+    reasons: List[str] = []
+    no_plsql_objects: List[str] = []
+    frontier_objects: List[str] = []
+    for n in nodes:
+        if n.grain != "object":
+            continue
+        label = "{}.{}".format(n.owner, n.object_name)
+        if n.is_frontier:
+            suffix = " [{}]".format(n.object_type) if n.object_type else ""
+            frontier_objects.append("{}{}".format(label, suffix))
+        elif n.object_type is not None and n.object_type not in depgraph.PLSQL_OBJECT_TYPES:
+            no_plsql_objects.append("{}: {}".format(label, n.object_type))
+        else:
+            reasons.append("{}: {}".format(label, n.note or "sem motivo registrado"))
+    reasons.sort()
+    no_plsql_objects.sort()
+    frontier_objects.sort()
+
+    # DEFEITO 3: mesma separacao builtin/generico aplicada aqui -- um
+    # UNKNOWN.UNKNOWN.<BUILTIN> nao precisa de investigacao humana, entao
+    # nao compete por atencao na lista de alvos genuinamente nao
+    # resolvidos (a secao "## Builtins SQL/PLSQL" do INDEX.md, alimentada
+    # por `result.builtin_calls`, ja cobre esses casos separadamente).
     unresolved_targets = sorted(
         "{}.{}.{}: {}".format(n.owner, n.object_name, n.subprogram, n.note or "sem motivo registrado")
         for n in nodes
-        if n.grain == "unresolved"
+        if n.grain == "unresolved" and not n.is_builtin
     )
 
     return CoverageReport(
@@ -583,6 +637,8 @@ def build_coverage(
         objects_subprogram=len(objects_subprogram),
         objects_object=len(objects_object),
         reasons=reasons,
+        no_plsql_objects=no_plsql_objects,
+        frontier_objects=frontier_objects,
         unresolved_targets=unresolved_targets,
         needs_recompile=sorted(set(result.needs_recompile)),
         capabilities=capabilities,
@@ -623,9 +679,19 @@ def _coverage_lines(coverage: CoverageReport) -> List[str]:
     lines.extend(_capability_lines(coverage.capabilities))
     lines.append("")
     lines.append(
+        # DEFEITO 4 (relatorio de verificacao independente, 2026-08-16):
+        # o rotulo antigo chamava o terceiro termo de "folhas de
+        # fronteira/nao resolvidas", conflando duas coisas diferentes --
+        # `nodes_unresolved` e SO sobre CALL sem alvo determinavel, nunca
+        # sobre fronteira de schema (SYS.STANDARD/DBMS_*/UTL_*, que fica
+        # em `nodes_object` -- ver `## COBERTURA` abaixo, secao "Fronteira
+        # de schema"). Contradicao achada ao vivo: um objeto de fronteira
+        # aparecia `(leaf)` na lista de nos ao mesmo tempo que esta linha
+        # dizia "0 folhas de fronteira". Rotulo agora descreve so o que o
+        # numero de fato conta.
         "objetos alcancados = {} grao subprograma ({} objetos distintos) + {} grao "
-        "objeto ({} objetos distintos, motivo por objeto abaixo) + {} folhas de "
-        "fronteira/nao resolvidas = {} nos".format(
+        "objeto ({} objetos distintos, classificacao abaixo) + {} nao resolvidas "
+        "(CALL sem alvo determinavel) = {} nos".format(
             coverage.nodes_subprogram,
             coverage.objects_subprogram,
             coverage.nodes_object,
@@ -677,20 +743,52 @@ def _coverage_lines(coverage: CoverageReport) -> List[str]:
     )
     lines.append("")
 
+    # DEFEITO 4: TRES secoes distintas em vez de uma so "Rebaixados" --
+    # cada balde tem um rotulo que diz a verdade sobre o que conta (ver
+    # docstring de `CoverageReport`).
     if coverage.reasons:
-        lines.append("### Rebaixados para grao objeto (motivo por objeto)")
+        lines.append(
+            "### Rebaixados para grao objeto ({} objetos PL/SQL sem PL/Scope completo "
+            "ou wrapped -- motivo individual por objeto)".format(len(coverage.reasons))
+        )
         lines.extend("- {}".format(r) for r in coverage.reasons)
         lines.append("")
 
+    if coverage.no_plsql_objects:
+        lines.append(
+            "### Sem PL/SQL ({} objetos -- TABLE/VIEW/SEQUENCE/etc.; NUNCA foram "
+            "candidatos a grao subprograma, a pergunta 'por que rebaixado' nao se "
+            "aplica)".format(len(coverage.no_plsql_objects))
+        )
+        lines.extend("- {}".format(r) for r in coverage.no_plsql_objects)
+        lines.append("")
+
+    if coverage.frontier_objects:
+        lines.append(
+            "### Fronteira de schema ({} objetos -- fora do escopo rastreado por "
+            "desenho: owner em stop_schemas ou objeto com prefixo DBMS_/UTL_; NUNCA "
+            "rebaixados, sao limite deliberado da travessia, nao uma deficiencia)".format(
+                len(coverage.frontier_objects)
+            )
+        )
+        lines.extend("- {}".format(r) for r in coverage.frontier_objects)
+        lines.append("")
+
     if coverage.unresolved_targets:
-        lines.append("### Nao resolvidos (folha de fronteira)")
+        lines.append(
+            "### Nao resolvidos ({} CALLs sem alvo determinavel -- alvo genuinamente "
+            "fora do escopo visivel ou sem PL/Scope; builtin de SYS.STANDARD NAO entra "
+            "aqui, ver secao Builtins abaixo)".format(len(coverage.unresolved_targets))
+        )
         lines.extend("- {}".format(r) for r in coverage.unresolved_targets)
         lines.append("")
 
     if coverage.needs_recompile:
         lines.append("### Recompilaveis (needs_recompile)")
         lines.append(
-            "- sem recompile.sql pronto neste modo (ProcNode nao carrega object_type); "
+            "- sem recompile.sql pronto neste modo (fora do escopo desta tarefa -- "
+            "`ALTER <TIPO> ... COMPILE PLSCOPE_SETTINGS=...` tem sintaxe especifica por "
+            "tipo de objeto, ex.: PACKAGE precisa de duas linhas, TRIGGER de uma); "
             "rode 'python -m plsqlflow depgraph OWNER.OBJETO' (sem --granular) sobre os "
             "refs abaixo para gerar o script de recompilacao:"
         )
@@ -924,12 +1022,24 @@ def render_index_md(result: ProcGraphResult, coverage: CoverageReport, meta_para
     lines.append("## Nos")
     for node in sorted(result.nodes, key=lambda n: (n.owner, n.object_name, n.subprogram)):
         marker = " (leaf)" if node.is_leaf else ""
+        if node.is_builtin:
+            # DEFEITO 3: no UNKNOWN.UNKNOWN.<BUILTIN> identificavel como
+            # builtin diretamente na lista de nos, sem precisar cruzar com
+            # a secao Builtins abaixo.
+            marker += " (builtin)"
         lines.append("- {} [grao:{}]{}".format(node_ref(node), node.grain, marker))
     lines.append("")
 
     lines.extend(_coverage_lines(coverage))
     lines.extend(_cycles_lines(result))
 
+    # DEFEITO 2 (relatorio de verificacao independente, 2026-08-16): a
+    # lista aqui embaixo E a fonte da verdade -- `## Estatisticas` acima
+    # usa `result.stats["blind_spots"]`, que `_ProcGraphEngine.to_result`
+    # agora calcula do MESMO `sorted(set(...))` usado aqui (ver docstring
+    # de `ProcGraphResult.builtin_calls`), entao os dois numeros SEMPRE
+    # batem por construcao -- nao ha mais dois calculos independentes do
+    # mesmo fato.
     lines.append("## PONTOS CEGOS")
     blind_lines: List[str] = []
     if result.blind_spots:
@@ -944,6 +1054,29 @@ def render_index_md(result: ProcGraphResult, coverage: CoverageReport, meta_para
         lines.extend(blind_lines)
     else:
         lines.append("- nenhum")
+    lines.append("")
+
+    # DEFEITO 3: builtin de SYS.STANDARD (NVL/ROUND/SUBSTR/SYSDATE/
+    # TO_CHAR/CHR/TRIM/GREATEST/LEAST/SQLERRM/...) sai da secao PONTOS
+    # CEGOS -- onde a esmagadora maioria das entradas afogava o SQL
+    # dinamico de verdade (achado ao vivo contra GESTAO_OO: das 20
+    # entradas listadas, quase todas eram builtin) -- e ganha secao
+    # PROPRIA. Continua CONTADA e VISIVEL aqui (a regra anti-omissao vale
+    # igual para builtin -- so para de competir por atencao com o que
+    # exige acao humana).
+    # DEFEITO 2, mesmo principio aplicado aqui: a contagem da linha-resumo
+    # e a lista abaixo vem do MESMO `sorted(set(...))` -- nunca dois
+    # calculos independentes do mesmo fato.
+    builtin_calls = sorted(set(result.builtin_calls))
+    lines.append("## Builtins SQL/PLSQL (nao expandidos)")
+    lines.append(
+        "chamadas a builtin SQL/PLSQL nao expandidas: {} (SYS.STANDARD -- semantica "
+        "conhecida e documentada, NAO e ponto cego de migracao)".format(len(builtin_calls))
+    )
+    if builtin_calls:
+        lines.extend("- {}".format(spot) for spot in builtin_calls)
+    else:
+        lines.append("- nenhuma")
 
     return _finalize(lines)
 
@@ -956,8 +1089,12 @@ def render_index_md(result: ProcGraphResult, coverage: CoverageReport, meta_para
 def compute_chain_hash(nodes: Sequence[ProcNode]) -> str:
     """Mesma tecnica de `depgraph_render.compute_chain_hash` (SHA-256 sobre
     lista ordenada, sem relogio) adaptada aos campos de `ProcNode`
-    (`owner`/`object_name`/`subprogram`/`grain`/`note` -- `ProcNode` nao tem
-    `object_type`/`last_ddl_time` como `DepNode`)."""
+    (`owner`/`object_name`/`subprogram`/`grain`/`note`). Nao inclui
+    `object_type`/`is_frontier`/`is_builtin` (DEFEITO 4/3, acrescentados
+    a `ProcNode` depois desta funcao existir) nem `last_ddl_time` (que
+    `ProcNode`, ao contrario de `DepNode`, nunca carrega) -- alterar o
+    conjunto de campos do hash e uma mudanca de contrato separada, fora
+    do escopo desta correcao."""
     items = sorted(
         (n.owner, n.object_name, n.subprogram, n.grain, "" if n.note is None else n.note)
         for n in nodes

@@ -277,6 +277,76 @@ _STANDALONE_TYPES = {"PROCEDURE", "FUNCTION", "TRIGGER"}
 # ensinar `_DepGraphEngine` a entender `None`.
 _NO_CAP_SENTINEL = 2**31 - 1
 
+# DEFEITO 3 (relatorio de verificacao independente, 2026-08-16): nomes de
+# funcao/pseudo-coluna de SYS.STANDARD (builtin de SQL/PL-SQL, semantica
+# conhecida e documentada -- NUNCA um alvo que precise de investigacao
+# humana para migrar). Uma CALL sem `owner_hint` (resolve_owner nao indexa
+# SYS.STANDARD -- e o proprio Oracle, nao um objeto do schema do usuario)
+# para um destes nomes vira no `UNKNOWN.UNKNOWN.<nome>` marcado
+# `is_builtin=True` em vez de entrar na lista geral de PONTOS CEGOS, onde
+# afogava o SQL dinamico de verdade (achado ao vivo contra GESTAO_OO: das
+# 20 entradas de PONTOS CEGOS, a esmagadora maioria era NVL/ROUND/SUBSTR/
+# SYSDATE/TO_CHAR/etc.). Lista deliberadamente conservadora (so os nomes
+# mais comuns de SQL/PL-SQL procedural) -- um builtin FORA desta lista
+# nunca desaparece, so continua contado em PONTOS CEGOS junto com alvos
+# genuinamente desconhecidos (falso negativo aqui e inofensivo: pior caso
+# e um builtin raro ainda competindo por atencao, nunca omissao).
+_SYS_STANDARD_BUILTIN_NAMES = frozenset(
+    {
+        "NVL",
+        "NVL2",
+        "ROUND",
+        "TRUNC",
+        "SUBSTR",
+        "SUBSTRB",
+        "INSTR",
+        "INSTRB",
+        "LENGTH",
+        "LENGTHB",
+        "LENGTHC",
+        "LPAD",
+        "RPAD",
+        "TRIM",
+        "LTRIM",
+        "RTRIM",
+        "UPPER",
+        "LOWER",
+        "INITCAP",
+        "REPLACE",
+        "TRANSLATE",
+        "CONCAT",
+        "TO_CHAR",
+        "TO_DATE",
+        "TO_NUMBER",
+        "TO_TIMESTAMP",
+        "TO_CLOB",
+        "SYSDATE",
+        "SYSTIMESTAMP",
+        "CURRENT_DATE",
+        "CURRENT_TIMESTAMP",
+        "CHR",
+        "ASCII",
+        "GREATEST",
+        "LEAST",
+        "DECODE",
+        "COALESCE",
+        "NULLIF",
+        "SQLERRM",
+        "SQLCODE",
+        "RAISE_APPLICATION_ERROR",
+        "MOD",
+        "POWER",
+        "SQRT",
+        "ABS",
+        "SIGN",
+        "CEIL",
+        "FLOOR",
+        "EXP",
+        "LN",
+        "LOG",
+    }
+)
+
 
 def _stub_expand_access(**kwargs: Any) -> List["ProcEdge"]:
     """Stub local do seam de T-05 (ver docstring do modulo). T-03 so
@@ -324,7 +394,33 @@ class ProcNode:
     reportadas SEPARADAS, porque um objeto so com IDENTIFIERS (sem
     STATEMENTS) ainda permite atribuir CALL corretamente -- so os
     acessos a tabela/SQL dinamico dele (via STMT) viram ponto cego, sem
-    rebaixar o objeto inteiro para grao objeto (regra 7 do contrato)."""
+    rebaixar o objeto inteiro para grao objeto (regra 7 do contrato).
+
+    `object_type`/`is_frontier` (DEFEITO 4, relatorio de verificacao
+    independente, 2026-08-16): so preenchidos para `grain="object"`
+    (fallback, via `_sync_fallback_results`, copiados de
+    `depgraph.DepNode.object_type`/heuristica de fronteira) -- `None`/
+    `False` para qualquer outro grao. Existem para que
+    `procgraph_render.build_coverage` separe TRES categorias que a
+    versao anterior misturava sob um so rotulo ("Rebaixados para grao
+    objeto"): (a) objeto PL/SQL de verdade sem PL/Scope completo/wrapped
+    (rebaixado por natureza), (b) objeto sem PL/SQL nenhum (TABLE/VIEW/
+    SEQUENCE -- `object_type not in depgraph.PLSQL_OBJECT_TYPES`, a
+    pergunta "por que rebaixado" nao se aplica), (c) fronteira de schema
+    (`is_frontier=True` -- owner em `stop_schemas` ou objeto com prefixo
+    DBMS_/UTL_, mesmo criterio de `depgraph._DepGraphEngine._process_object`,
+    replicado aqui via `_ProcGraphEngine._stop_schemas_upper` porque
+    `depgraph.py` esta congelado para esta tarefa -- NUNCA um objeto
+    rebaixado, e limite deliberado da travessia).
+
+    `is_builtin` (DEFEITO 3, mesmo relatorio): so preenchido para
+    `grain="unresolved"` -- True quando a CALL sem `owner_hint` resolvida
+    para este no (`UNKNOWN.UNKNOWN.<nome>`) bate contra
+    `_SYS_STANDARD_BUILTIN_NAMES` (NVL/ROUND/SUBSTR/SYSDATE/TO_CHAR/...).
+    Builtin de SYS.STANDARD tem semantica conhecida e documentada -- nao
+    e ponto cego de migracao, mas continua CONTADO e VISIVEL (regra
+    anti-omissao vale igual); so para de competir por atencao com o que
+    exige acao humana (SQL dinamico, alvo genuinamente desconhecido)."""
 
     owner: str
     object_name: str
@@ -334,6 +430,9 @@ class ProcNode:
     plscope_statements: bool = False
     is_leaf: bool = False
     note: Optional[str] = None
+    object_type: Optional[str] = None
+    is_frontier: bool = False
+    is_builtin: bool = False
 
 
 @dataclass
@@ -375,9 +474,31 @@ class ProcGraphResult:
     `truncation_reason` existe e `not_expanded` nao esta vazio -- nunca
     corte silencioso. `blind_spots` (novo aqui, sem equivalente em
     `DepGraphResult`) enumera toda CALL que nao pode ser atribuida a
-    nenhum destino conhecido (alvo fora do escopo visivel, ex.:
-    SYS.STANDARD) -- distinto de `not_expanded`, que e sobre caps de
-    usuario, nao sobre alvo desconhecido.
+    nenhum destino conhecido (alvo GENUINAMENTE fora do escopo visivel,
+    ex.: pacote de terceiro nao indexado) -- distinto de `not_expanded`,
+    que e sobre caps de usuario, nao sobre alvo desconhecido, e distinto
+    de `builtin_calls` abaixo (DEFEITO 3).
+
+    `builtin_calls` (DEFEITO 3, relatorio de verificacao independente,
+    2026-08-16): CALL sem `owner_hint` para um nome de SYS.STANDARD
+    (`_SYS_STANDARD_BUILTIN_NAMES` -- NVL/ROUND/SUBSTR/SYSDATE/TO_CHAR/
+    etc.), MESMO FORMATO de string que `blind_spots` mas roteada para
+    esta lista SEPARADA em vez de `blind_spots` -- builtin tem semantica
+    conhecida e documentada, nao e ponto cego de migracao (achado ao
+    vivo contra GESTAO_OO: 20 entradas de PONTOS CEGOS, esmagadora
+    maioria builtin, afogando o SQL dinamico de verdade que a secao
+    existe para destacar). Continua CONTADA e VISIVEL (regra
+    anti-omissao vale igual) -- so em secao propria, sem competir por
+    atencao. `to_result()` dedupe ambas as listas (`sorted(set(...))`) e
+    usa o TAMANHO DEDUPLICADO nos dois lugares onde o numero aparece
+    (`stats["blind_spots"]`/`stats["builtin_calls"]` E a lista em si) --
+    correcao do DEFEITO 2 (mesmo relatorio): antes desta correcao,
+    `stats["blind_spots"]` contava `len(self.blind_spots)` (lista BRUTA,
+    com duplicatas de CALLs identicas vistas em pontos diferentes da
+    travessia) enquanto o campo `blind_spots` em si ja saia deduplicado
+    -- dois numeros para o mesmo fato no mesmo documento (INDEX.md dizia
+    "blind_spots: 28" nas Estatisticas mas listava 20 entradas em PONTOS
+    CEGOS). Agora os dois vem do MESMO valor ja deduplicado.
 
     `needs_recompile` (T-04): refs de objeto (`OWNER.OBJETO`, 2 partes)
     que caem no fallback de grao objeto e sao recompilaveis para ganhar
@@ -395,6 +516,10 @@ class ProcGraphResult:
     not_expanded: List[str]
     blind_spots: List[str]
     needs_recompile: List[str] = field(default_factory=list)
+    # DEFEITO 3: default vazio preserva compatibilidade com
+    # `ProcGraphResult(...)` construido a mao nos testes existentes (mesmo
+    # padrao de `needs_recompile`/`stats` abaixo).
+    builtin_calls: List[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
     # Denominador honesto da reconciliacao de COBERTURA (correcao do
     # DEFEITO 2, procgraph_render.build_coverage): uma tripla
@@ -403,7 +528,7 @@ class ProcGraphResult:
     # "statements" e fechava mesmo quando um statement nao gerava aresta
     # nenhuma, exatamente o buraco que deixou o SQL dinamico de
     # RUN_DYNAMIC sumir sem erro). `stmt_type` (correcao do DEFEITO
-    # BLOQUEANTE seguinte, ver procgraph_access.py secao 5) e o que
+    # BLOQUEANTE seguinte, ver procgraph_access.py secao 6) e o que
     # permite `CoverageError` nomear o tipo desconhecido na mensagem
     # quando um statement lido fica mesmo assim sem nenhuma aresta
     # correspondente. Populado por `_ProcGraphEngine.to_result()`; default
@@ -659,6 +784,10 @@ class _ProcGraphEngine:
         self._edge_keys: Set[Tuple[str, str, str, Optional[int]]] = set()
         self.not_expanded: List[str] = []
         self.blind_spots: List[str] = []
+        # DEFEITO 3: builtin de SYS.STANDARD roteado para uma lista
+        # SEPARADA de `blind_spots` (mesmo formato de string) -- ver
+        # docstring de `ProcGraphResult.builtin_calls`.
+        self.builtin_calls: List[str] = []
         self.needs_recompile: List[str] = []
         # Correcao do DEFEITO 2 (COBERTURA, procgraph_render.py): uma
         # tripla (ref, line, stmt_type) por STMT de fato despachado a
@@ -684,6 +813,14 @@ class _ProcGraphEngine:
         # `_fallback_object_grain`).
         self.dep_extractor = dep_extractor
         self.stop_schemas = tuple(stop_schemas)
+        # DEFEITO 4: mesmo criterio de fronteira de
+        # `depgraph._DepGraphEngine._process_object`
+        # (`key[0] in stop_schemas_u or key[1].startswith(("DBMS_","UTL_"))`),
+        # replicado aqui (nao importado -- `depgraph.py` esta congelado
+        # para esta tarefa) para que `_sync_fallback_results` classifique
+        # ProcNode.is_frontier com o MESMO criterio que decidiu a
+        # classificacao la.
+        self._stop_schemas_upper = frozenset(s.upper() for s in self.stop_schemas)
         self._fallback_engine: Optional["depgraph._DepGraphEngine"] = None
         # Projecao do visited-set fino (OWNER, OBJETO, SUBPROGRAMA) para o
         # espaco por objeto (OWNER, OBJETO) do `_DepGraphEngine` -- ver
@@ -776,6 +913,61 @@ class _ProcGraphEngine:
             return "sem PL/Scope identifiers -- atribuicao por subprograma impossivel"
         return None
 
+    def _object_grain_reason(self, dep_node: "depgraph.DepNode") -> str:
+        """DEFEITO 4 (relatorio de verificacao independente, 2026-08-16):
+        motivo INDIVIDUAL para um objeto PL/SQL alcancado so
+        TRANSITIVAMENTE pelo fallback de grao objeto -- nunca foi o
+        GATILHO direto de `_fallback_object_grain` (esse ja ganha
+        `root_reason` em `_sync_fallback_results`, calculado uma vez por
+        `_fallback_reason`). Antes desta correcao, todo objeto alcancado
+        so transitivamente ficava com `note=None` -> "sem motivo
+        registrado" na secao "Rebaixados para grao objeto" (achado ao
+        vivo: 26 de 27 objetos listados sem motivo, so a raiz tinha).
+
+        Mesmo criterio de `_fallback_reason` (wrapped primeiro, depois
+        ausencia de identifiers/statements), aplicado por objeto
+        individual em vez de uma unica vez no gatilho -- best effort,
+        hasattr-guardado, NUNCA lanca (mesma filosofia de
+        `procgraph_access._discover_triggers`/`_dynamic_sql_edges`: uma
+        consulta extra que falha nunca derruba a travessia, so degrada o
+        motivo para o caso generico).
+
+        Um objeto pode chegar aqui com PL/Scope COMPLETO (identifiers E
+        statements) -- nao e "rebaixado" por deficiencia PROPRIA, e sim
+        porque a travessia so o alcancou pelo caminho de ALL_DEPENDENCIES
+        (grao objeto), nunca por uma CALL resolvida do motor fino. O
+        motivo entao explica ISSO, honestamente, em vez de inventar uma
+        deficiencia que o objeto nao tem."""
+        owner, object_name = dep_node.owner, dep_node.object_name
+        try:
+            wrapped = bool(
+                hasattr(self.extractor, "object_wrapped")
+                and self.extractor.object_wrapped(owner, object_name)
+            )
+        except Exception:
+            wrapped = False
+        if wrapped:
+            return (
+                "objeto wrapped -- PL/Scope nao consegue introspectar bytecode wrapped, "
+                "atribuicao por subprograma impossivel (alcancado via cadeia de fallback, "
+                "nunca foi o gatilho direto)"
+            )
+        if not dep_node.plscope_identifiers:
+            return (
+                "sem PL/Scope identifiers -- atribuicao por subprograma impossivel "
+                "(alcancado via cadeia de fallback, nunca foi o gatilho direto)"
+            )
+        if not dep_node.plscope_statements:
+            return (
+                "PL/Scope IDENTIFIERS presente mas STATEMENTS ausente/incompleto -- acesso "
+                "a tabela/SQL dinamico deste objeto nao e visivel ao compilador (needs_recompile)"
+            )
+        return (
+            "PL/Scope completo neste objeto -- classificado grao objeto so porque foi "
+            "alcancado dentro da cadeia de fallback (via ALL_DEPENDENCIES, nao por uma CALL "
+            "resolvida do motor fino nesta travessia), nao por deficiencia propria"
+        )
+
     def _get_fallback_engine(self) -> "depgraph._DepGraphEngine":
         if self._fallback_engine is None:
             no_cap_objects = self.max_objects if self.max_objects is not None else _NO_CAP_SENTINEL
@@ -850,10 +1042,37 @@ class _ProcGraphEngine:
         for key, dep_node in engine.nodes.items():
             obj_ref = "{}.{}".format(key[0], key[1])
             root_reason = self._fallback_root_reasons.get(key)
-            if root_reason is not None and dep_node.note:
-                note = "{}; {}".format(root_reason, dep_node.note)
+            # DEFEITO 4 (relatorio de verificacao independente,
+            # 2026-08-16): mesmo criterio de fronteira de
+            # `depgraph._DepGraphEngine._process_object` (owner em
+            # stop_schemas OU nome com prefixo DBMS_/UTL_) -- objeto de
+            # fronteira NUNCA e "rebaixado" (nunca foi candidato a grao
+            # subprograma, e limite deliberado da travessia), entao ganha
+            # nota PROPRIA em vez de herdar o motivo do gatilho ou cair em
+            # "sem motivo registrado".
+            is_frontier = key[0] in self._stop_schemas_upper or key[1].startswith(("DBMS_", "UTL_"))
+            if root_reason is not None:
+                note = "{}; {}".format(root_reason, dep_node.note) if dep_node.note else root_reason
+            elif dep_node.note:
+                # `_DepGraphEngine` ja anotou algo proprio (ex.: db_link,
+                # trigger_status:DISABLED) -- preservado tal qual.
+                note = dep_node.note
+            elif is_frontier:
+                note = (
+                    "fronteira de schema -- fora do escopo rastreado por desenho "
+                    "(owner em stop_schemas ou objeto com prefixo DBMS_/UTL_); NUNCA "
+                    "candidato a grao subprograma, nao e rebaixamento"
+                )
+            elif dep_node.object_type not in depgraph.PLSQL_OBJECT_TYPES:
+                note = (
+                    "sem PL/SQL ({}) -- nunca candidato a grao subprograma, alcancado so "
+                    "como dependencia de dado; a pergunta 'por que rebaixado' nao se aplica"
+                ).format(dep_node.object_type or "tipo desconhecido")
             else:
-                note = root_reason or dep_node.note
+                # Objeto PL/SQL de verdade, alcancado so TRANSITIVAMENTE
+                # (nunca foi o gatilho direto -- esse ja tem root_reason
+                # acima) -- motivo individual, ver `_object_grain_reason`.
+                note = self._object_grain_reason(dep_node)
             proc_node = self.nodes.get(obj_ref)
             if proc_node is None:
                 self.nodes[obj_ref] = ProcNode(
@@ -865,12 +1084,16 @@ class _ProcGraphEngine:
                     plscope_statements=dep_node.plscope_statements,
                     is_leaf=dep_node.is_leaf,
                     note=note,
+                    object_type=dep_node.object_type,
+                    is_frontier=is_frontier,
                 )
             else:
                 proc_node.is_leaf = dep_node.is_leaf
                 proc_node.plscope_identifiers = dep_node.plscope_identifiers
                 proc_node.plscope_statements = dep_node.plscope_statements
                 proc_node.note = note
+                proc_node.object_type = dep_node.object_type
+                proc_node.is_frontier = is_frontier
 
         for dep_edge in engine.edges:
             # ProcEdge nao modela todos os campos de DepEdge (op/cols/
@@ -1035,6 +1258,7 @@ class _ProcGraphEngine:
         called_name: str,
         owner_hint: Optional[Tuple[str, str]],
         reason: str,
+        is_builtin: bool = False,
     ) -> None:
         if ref in self.nodes:
             return
@@ -1051,6 +1275,12 @@ class _ProcGraphEngine:
             grain="unresolved",
             is_leaf=True,
             note=reason,
+            # DEFEITO 3: `is_builtin` so e True quando `owner_hint is None`
+            # e `called_name` bate contra `_SYS_STANDARD_BUILTIN_NAMES` --
+            # ver `_process_call`. Deixa o no `UNKNOWN.UNKNOWN.<BUILTIN>`
+            # IDENTIFICAVEL como builtin (contrato: "os nos UNKNOWN.UNKNOWN.
+            # <BUILTIN> tambem devem ficar identificaveis").
+            is_builtin=is_builtin,
         )
 
     def _process_call(self, from_ref: str, assignment: Assignment, depth: int) -> None:
@@ -1149,6 +1379,18 @@ class _ProcGraphEngine:
         # em blind_spots: nao e um alvo desconhecido, e um corte
         # declarado).
         assert isinstance(resolved, UnresolvedCall)
+        # DEFEITO 3 (relatorio de verificacao independente, 2026-08-16):
+        # builtin de SYS.STANDARD (NVL/ROUND/SUBSTR/SYSDATE/TO_CHAR/...)
+        # NUNCA tem `owner_hint` (resolve_owner nao indexa SYS.STANDARD --
+        # e o proprio Oracle, nao um objeto do schema do usuario). Checado
+        # so quando `owner_hint is None` E ha signature -- exatamente o
+        # ramo que ANTES sempre virava "alvo fora do escopo visivel (ex.:
+        # SYS.STANDARD)": builtin tem semantica conhecida e documentada,
+        # nao precisa de investigacao humana, entao sai da lista geral de
+        # PONTOS CEGOS (`blind_spots`) para uma lista PROPRIA
+        # (`builtin_calls`), continuando contado e visivel (regra
+        # anti-omissao vale igual).
+        is_builtin = False
         if cap_blocked:
             reason = "objeto {}.{} conhecido mas nao carregado -- limite de max_objects atingido".format(
                 owner_hint[0].upper(), owner_hint[1].upper()
@@ -1159,11 +1401,19 @@ class _ProcGraphEngine:
             )
         elif assignment.signature is None:
             reason = "CALL sem signature (destino indeterminavel estaticamente)"
+        elif (assignment.target or "").upper() in _SYS_STANDARD_BUILTIN_NAMES:
+            is_builtin = True
+            reason = (
+                "builtin SYS.STANDARD ({}) -- semantica conhecida e documentada, nao "
+                "expandido (nao e ponto cego de migracao)"
+            ).format((assignment.target or "").upper())
         else:
             reason = "alvo fora do escopo visivel (ex.: SYS.STANDARD) ou sem PL/Scope"
 
         unresolved_ref = self._unresolved_ref(assignment.target, assignment.signature, owner_hint)
-        self._ensure_unresolved_node(unresolved_ref, assignment.target, owner_hint, reason)
+        self._ensure_unresolved_node(
+            unresolved_ref, assignment.target, owner_hint, reason, is_builtin=is_builtin
+        )
         self._add_edge(
             from_ref,
             unresolved_ref,
@@ -1173,7 +1423,11 @@ class _ProcGraphEngine:
             resolved=False,
             reason=reason,
         )
-        if not cap_blocked:
+        if cap_blocked:
+            pass  # ja declarado em not_expanded acima -- nao duplica em blind_spots/builtin_calls.
+        elif is_builtin:
+            self.builtin_calls.append("{} -> {} ({})".format(from_ref, assignment.target, reason))
+        else:
             self.blind_spots.append("{} -> {} ({})".format(from_ref, assignment.target, reason))
 
     def _process_stmt(
@@ -1226,7 +1480,7 @@ class _ProcGraphEngine:
             # nunca entra aqui. `assignment.target` (tipo do statement,
             # mesmo campo que `procgraph_access._table_access_edges` le)
             # vai junto -- correcao do DEFEITO BLOQUEANTE seguinte
-            # (procgraph_access.py secao 5): permite ao `CoverageError` de
+            # (procgraph_access.py secao 6): permite ao `CoverageError` de
             # `build_coverage` nomear o tipo quando um statement lido
             # fica sem nenhuma aresta correspondente.
             self._statements_seen.append(
@@ -1406,12 +1660,31 @@ class _ProcGraphEngine:
     # ---- resultado ----
 
     def to_result(self) -> ProcGraphResult:
+        # DEFEITO 2 (relatorio de verificacao independente, 2026-08-16):
+        # a lista DEDUPLICADA e calculada UMA VEZ aqui e usada nos DOIS
+        # lugares onde o numero aparece -- `stats["blind_spots"]` E o
+        # campo `blind_spots` do resultado. ANTES desta correcao,
+        # `stats["blind_spots"]` contava `len(self.blind_spots)` (lista
+        # BRUTA, com duplicatas de CALLs identicas vistas em pontos
+        # diferentes da travessia -- ex.: duas chamadas a NVL do mesmo
+        # `from_ref`/mesma linha, por caminhos de resolucao diferentes)
+        # enquanto o campo `blind_spots` do resultado ja saia deduplicado
+        # (`sorted(set(...))`, linha abaixo) -- dois numeros para o mesmo
+        # fato no mesmo documento (INDEX.md dizia "blind_spots: 28" nas
+        # Estatisticas mas a secao PONTOS CEGOS do MESMO arquivo listava
+        # so 20 entradas). Mesma correcao aplicada a `builtin_calls`
+        # (DEFEITO 3) por simetria -- nunca teve o bug (campo novo), mas
+        # o mesmo principio ("a estatistica tem que refletir exatamente o
+        # que e listado") vale para ele desde o primeiro dia.
+        deduped_blind_spots = sorted(set(self.blind_spots))
+        deduped_builtin_calls = sorted(set(self.builtin_calls))
         stats = {
             "nodes": len(self.nodes),
             "edges": len(self.edges),
             "objects_loaded": len(self._object_cache),
             "not_expanded": len(self.not_expanded),
-            "blind_spots": len(self.blind_spots),
+            "blind_spots": len(deduped_blind_spots),
+            "builtin_calls": len(deduped_builtin_calls),
             "needs_recompile": len(self.needs_recompile),
             "fallback_objects": sum(1 for n in self.nodes.values() if n.grain == "object"),
             "max_objects": self.max_objects,
@@ -1430,7 +1703,8 @@ class _ProcGraphEngine:
             truncated=self.truncated,
             truncation_reason=self.truncation_reason,
             not_expanded=sorted(set(self.not_expanded)),
-            blind_spots=sorted(set(self.blind_spots)),
+            blind_spots=deduped_blind_spots,
+            builtin_calls=deduped_builtin_calls,
             needs_recompile=sorted(set(self.needs_recompile)),
             stats=stats,
             statements_read=sorted(self._statements_seen),

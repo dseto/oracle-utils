@@ -487,8 +487,16 @@ def test_trigger_fires_edges_counted_separately_from_object_fallback(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# OPEN ... FOR dinamico NAO pode ser engolido pelo balde novo (CUIDADO
-# explicito do relatorio) -- continua classificado DYNAMIC_SQL.
+# DEFEITO 1 (relatorio de verificacao independente, 2026-08-16): OPEN
+# ESTATICO vs DINAMICO -- `ALL_STATEMENTS.TYPE` para os dois casos e o
+# MESMO literal "OPEN" (fato confirmado contra banco real Oracle 21c,
+# GESTAO_OO.PKG_DYNAMIC_EVALUATOR). A desambiguacao correta usa o
+# TEXTO-FONTE (ver procgraph_access._open_stmt_is_dynamic); cobertura
+# principal dos tres cenarios obrigatorios (fonte com FOR/sem FOR/
+# indisponivel) fica em tests/test_procgraph_access.py -- aqui so a
+# integracao com o resultado de `expand_access` continua validada, JA
+# CORRIGIDA para a regra de desempate (indecidivel -> DINAMICO, nunca
+# NO_DATA_DEP).
 # --------------------------------------------------------------------------
 
 
@@ -498,9 +506,9 @@ def test_open_for_dynamic_stays_dynamic_sql_never_no_dependency():
         IdentifierRow(2, 1, 3, 1, "RUNNER", "PROCEDURE", "DEFINITION", "SIG_RUNNER"),
     ]
     cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY", body_statements=[])
-    # stmt_type real do OPEN dinamico e "OPEN FOR" (report.py::DYNSQL_STMT_TYPES
-    # ja usa este literal exato, confirmado contra o banco dev) -- distinto
-    # do "OPEN" estatico (sem "FOR"), que cai no balde novo.
+    # Rede de seguranca defensiva: literal "OPEN FOR" nunca confirmado
+    # contra banco real (o caso normal e "OPEN" puro, coberto abaixo) --
+    # `_is_dynamic_stmt_type` ainda o trata como dinamico se aparecer.
     statement = Assignment(usage_id=3, line=7, kind="STMT", target="OPEN FOR", enclosing="RUNNER")
 
     edges = expand_access(
@@ -512,13 +520,20 @@ def test_open_for_dynamic_stays_dynamic_sql_never_no_dependency():
     assert edges[0].confidence == "opaque"  # sem extractor.source neste teste
 
 
-def test_open_static_falls_into_no_dependency_bucket():
+def test_open_pure_without_source_defaults_to_dynamic_never_no_dependency():
+    # CORRECAO do DEFEITO 1: `stmt_type` PURO "OPEN" (o caso real -- os
+    # dois casos, estatico e dinamico, saem identicos do compilador) SEM
+    # capacidade `source` no extractor e INDECIDIVEL -- a regra de
+    # desempate manda DINAMICO (opaque), nunca NO_DATA_DEP. ANTES desta
+    # correcao este cenario (sem extractor nenhum) caia direto em
+    # NO_DATA_DEP -- exatamente a falha que o DEFEITO 1 provou em
+    # producao (SQL dinamico virando NO_DATA_DEP e sumindo de PONTOS
+    # CEGOS).
     identifiers = [
         IdentifierRow(1, 0, 1, 1, "PKG", "PACKAGE", "DEFINITION"),
         IdentifierRow(2, 1, 3, 1, "RUNNER", "PROCEDURE", "DEFINITION", "SIG_RUNNER"),
     ]
-    cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY")
-    # "OPEN" estatico -- SEM "FOR" -- abre um cursor JA declarado.
+    cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY", body_statements=[])
     statement = Assignment(usage_id=3, line=7, kind="STMT", target="OPEN", enclosing="RUNNER")
 
     edges = expand_access(
@@ -526,8 +541,271 @@ def test_open_static_falls_into_no_dependency_bucket():
     )
 
     assert len(edges) == 1
+    assert edges[0].edge_type == "DYNAMIC_SQL"
+    assert edges[0].confidence == "opaque"
+    assert edges[0].edge_type != "NO_DATA_DEP"
+
+
+def test_open_pure_static_falls_into_no_dependency_bucket_when_source_proves_it():
+    # Contraste direto: MESMO "OPEN" puro, agora com um extractor.source
+    # que PROVA (fecha com ";" sem nenhum "FOR") que e um cursor
+    # ESTATICO -- so ENTAO cai no balde NO_DATA_DEP.
+    from plsqlflow import extract
+
+    identifiers = [
+        IdentifierRow(1, 0, 1, 1, "PKG", "PACKAGE", "DEFINITION"),
+        IdentifierRow(2, 1, 3, 1, "RUNNER", "PROCEDURE", "DEFINITION", "SIG_RUNNER"),
+    ]
+    cache = SimpleNamespace(body_identifiers=identifiers, body_type="PACKAGE BODY")
+    statement = Assignment(usage_id=3, line=7, kind="STMT", target="OPEN", enclosing="RUNNER")
+
+    class _StaticOpenSourceExtractor:
+        def source(self, owner: str, object_name: str):
+            return [extract.FetchSourceRow(type="PACKAGE BODY", line=7, text="OPEN c;\n")]
+
+    edges = expand_access(
+        owner="GESTAO",
+        object_name="PKG",
+        subprogram="RUNNER",
+        statement=statement,
+        object_cache=cache,
+        extractor=_StaticOpenSourceExtractor(),
+    )
+
+    assert len(edges) == 1
     assert edges[0].edge_type == "NO_DATA_DEP"
     assert edges[0].op == "OPEN"
+
+
+# --------------------------------------------------------------------------
+# DEFEITO 2 (relatorio de verificacao independente, 2026-08-16): a
+# estatistica "blind_spots" no INDEX.md tinha que refletir EXATAMENTE o
+# que a secao PONTOS CEGOS lista -- achado ao vivo: INDEX.md dizia
+# "blind_spots: 28" nas Estatisticas mas listava so 20 entradas em PONTOS
+# CEGOS (dedup acontecia so em um lugar). GESTAO.FLOW_DEMO.CALC_OVERLOAD#2
+# chama LENGTH (builtin, ver DEFEITO 3 abaixo) alem de RUN_DYNAMIC ter dois
+# EXECUTE IMMEDIATE opacos -- fixture real que exercita os dois defeitos
+# ao mesmo tempo.
+# --------------------------------------------------------------------------
+
+
+def test_stats_blind_spots_count_matches_pontos_cegos_section_exactly(tmp_path):
+    result = _flow_demo_result()
+    out_dir = tmp_path / "graph"
+
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+
+    stats_line = next(line for line in index_text.splitlines() if line.startswith("- blind_spots:"))
+    stats_count = int(stats_line.split(":")[1].strip())
+
+    pontos_cegos_section = index_text.split("## PONTOS CEGOS", 1)[1].split(
+        "## Builtins SQL/PLSQL", 1
+    )[0]
+    listed_entries = [
+        line
+        for line in pontos_cegos_section.splitlines()
+        if line.startswith("- ") and "nao expandido:" not in line and line.strip() != "- nenhum"
+    ]
+
+    assert stats_count == len(listed_entries)
+    assert stats_count == len(set(result.blind_spots))
+
+
+# --------------------------------------------------------------------------
+# DEFEITO 3 (relatorio de verificacao independente, 2026-08-16): builtin
+# de SYS.STANDARD (LENGTH, no caso da fixture real) some da secao PONTOS
+# CEGOS -- onde afogava o SQL dinamico de verdade -- e ganha secao
+# propria, ainda contada e visivel.
+# --------------------------------------------------------------------------
+
+
+def test_builtin_call_excluded_from_pontos_cegos_and_listed_in_own_section(tmp_path):
+    result = _flow_demo_result()
+    out_dir = tmp_path / "graph"
+
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+
+    pontos_cegos_section = index_text.split("## PONTOS CEGOS", 1)[1].split(
+        "## Builtins SQL/PLSQL", 1
+    )[0]
+    builtins_section = index_text.split("## Builtins SQL/PLSQL", 1)[1]
+
+    # LENGTH nunca aparece em PONTOS CEGOS (nao afoga mais o SQL dinamico).
+    assert "LENGTH" not in pontos_cegos_section
+    # ... mas continua contada e visivel na secao propria.
+    assert "LENGTH" in builtins_section
+    assert "chamadas a builtin SQL/PLSQL nao expandidas: 1" in builtins_section
+
+    # O no UNKNOWN.UNKNOWN.LENGTH fica identificavel como builtin na
+    # lista de nos.
+    nos_section = index_text.split("## Nos", 1)[1].split("## COBERTURA", 1)[0]
+    length_line = next(line for line in nos_section.splitlines() if "LENGTH" in line)
+    assert "(builtin)" in length_line
+
+
+def test_builtin_calls_field_matches_stats_and_never_empty_for_length_call():
+    result = _flow_demo_result()
+
+    assert result.stats["builtin_calls"] == len(set(result.builtin_calls))
+    assert result.stats["builtin_calls"] >= 1
+    assert any("LENGTH" in spot for spot in result.builtin_calls)
+    assert not any("LENGTH" in spot for spot in result.blind_spots)
+
+    length_node = next(
+        n for n in result.nodes if n.grain == "unresolved" and n.subprogram == "LENGTH"
+    )
+    assert length_node.is_builtin is True
+
+
+# --------------------------------------------------------------------------
+# DEFEITO 4 (relatorio de verificacao independente, 2026-08-16): motivo
+# ausente no rebaixamento (objeto alcancado transitivamente pelo fallback
+# nunca recebia `note`), e TABELA/fronteira aparecendo sob "Rebaixados
+# para grao objeto" -- quando nunca foram candidatos a grao subprograma.
+# --------------------------------------------------------------------------
+
+
+def _demote_reason_fixture():
+    """CALLER (fino) -> ROOT_FB (sem PL/Scope, gatilho do fallback) ->
+    via ALL_DEPENDENCIES: SIBLING_PKG (PL/SQL completo, alcancado so
+    TRANSITIVAMENTE -- nunca foi gatilho direto), TB_PROJETOS (TABLE,
+    nunca foi candidato a grao subprograma) e dois objetos de FRONTEIRA
+    (SYS.STANDARD por stop_schemas, PUBLIC.DBMS_LOB por prefixo DBMS_)."""
+
+    class _ProcExtractor:
+        def plscope_identifiers(self, owner, object_name):
+            ref = "{}.{}".format(owner.upper(), object_name.upper())
+            if ref == "GESTAO.CALLER":
+                return [
+                    SimpleNamespace(
+                        usage_id=1, usage_context_id=0, line=1, col=1, name="CALLER",
+                        type="PACKAGE", usage="DEFINITION", signature=None, object_type="PACKAGE BODY",
+                    ),
+                    SimpleNamespace(
+                        usage_id=2, usage_context_id=1, line=3, col=1, name="P1",
+                        type="PROCEDURE", usage="DEFINITION", signature="SIG_CALLER_P1", object_type="PACKAGE BODY",
+                    ),
+                    SimpleNamespace(
+                        usage_id=3, usage_context_id=2, line=4, col=3, name="P1",
+                        type="PROCEDURE", usage="CALL", signature="SIG_ROOT_FB_P1", object_type="PACKAGE BODY",
+                    ),
+                ]
+            return []
+
+        def plscope_statements(self, owner, object_name):
+            return []
+
+        def resolve_owner(self, signature):
+            if signature == "SIG_ROOT_FB_P1":
+                return ("GESTAO", "ROOT_FB")
+            return None
+
+        def object_wrapped(self, owner, object_name):
+            return False
+
+    class _DepExtractor:
+        CATALOG = {
+            "GESTAO": [
+                ("ROOT_FB", "PACKAGE BODY", "VALID"),
+                ("SIBLING_PKG", "PACKAGE BODY", "VALID"),
+                ("TB_PROJETOS", "TABLE", "VALID"),
+            ],
+        }
+        DEP_PLSCOPE_FULL = {"SIBLING_PKG"}
+        DEPS_DIRECT = {
+            ("GESTAO", "ROOT_FB"): [
+                ("GESTAO", "SIBLING_PKG", "PACKAGE"),
+                ("GESTAO", "TB_PROJETOS", "TABLE"),
+                ("SYS", "STANDARD", "PACKAGE"),
+                ("PUBLIC", "DBMS_LOB", "PACKAGE"),
+            ],
+        }
+
+        def deps_direct(self, owner, name):
+            key = (owner.upper(), name.upper())
+            return [
+                SimpleNamespace(referenced_owner=o, referenced_name=n, referenced_type=t, dependency_type="HARD")
+                for (o, n, t) in self.DEPS_DIRECT.get(key, [])
+            ]
+
+        def object_catalog(self, owner, object_list=None):
+            return [
+                SimpleNamespace(owner=owner.upper(), object_name=name, object_type=type_, status=status, last_ddl_time="2026-08-15 10:00:00")
+                for (name, type_, status) in self.CATALOG.get(owner.upper(), [])
+            ]
+
+        def plscope_check(self, owner):
+            rows = []
+            for (name, type_, _status) in self.CATALOG.get(owner.upper(), []):
+                settings = "IDENTIFIERS:ALL,STATEMENTS:ALL" if name in self.DEP_PLSCOPE_FULL else None
+                rows.append(SimpleNamespace(owner=owner.upper(), name=name, type=type_, plscope_settings=settings))
+            return rows
+
+        def synonym(self, owner, name):
+            return []
+
+    return build_proc_graph(_ProcExtractor(), ("GESTAO", "CALLER", "P1"), dep_extractor=_DepExtractor())
+
+
+def test_transitively_reached_plsql_object_gets_own_reason_never_generic():
+    result = _demote_reason_fixture()
+
+    sibling = next(n for n in result.nodes if n.object_name == "SIBLING_PKG")
+    assert sibling.grain == "object"
+    assert sibling.note is not None
+    assert sibling.note != "sem motivo registrado"
+    # PL/Scope completo neste objeto -- alcancado so pela cadeia de
+    # fallback, nao por deficiencia propria (ver _object_grain_reason).
+    assert "PL/Scope completo" in sibling.note
+
+    coverage = build_coverage(result, FULL_CAPABILITIES)
+    reasons_text = " ".join(coverage.reasons)
+    assert "GESTAO.SIBLING_PKG" in reasons_text
+    assert "sem motivo registrado" not in reasons_text
+
+
+def test_table_and_frontier_never_appear_under_rebaixados(tmp_path):
+    result = _demote_reason_fixture()
+
+    table_node = next(n for n in result.nodes if n.object_name == "TB_PROJETOS")
+    assert table_node.grain == "object"
+    assert table_node.object_type == "TABLE"
+    assert table_node.is_frontier is False
+
+    standard_node = next(n for n in result.nodes if n.object_name == "STANDARD")
+    dbms_lob_node = next(n for n in result.nodes if n.object_name == "DBMS_LOB")
+    assert standard_node.is_frontier is True
+    assert dbms_lob_node.is_frontier is True
+
+    coverage = build_coverage(result, FULL_CAPABILITIES)
+    reasons_text = " ".join(coverage.reasons)
+    assert "TB_PROJETOS" not in reasons_text
+    assert "STANDARD" not in reasons_text
+    assert "DBMS_LOB" not in reasons_text
+
+    no_plsql_text = " ".join(coverage.no_plsql_objects)
+    assert "GESTAO.TB_PROJETOS: TABLE" in no_plsql_text
+
+    frontier_text = " ".join(coverage.frontier_objects)
+    assert "SYS.STANDARD" in frontier_text
+    assert "PUBLIC.DBMS_LOB" in frontier_text
+
+    out_dir = tmp_path / "graph-demote-reason"
+    render_graph(result, out_dir, {"capabilities": FULL_CAPABILITIES})
+    index_text = (out_dir / "INDEX.md").read_text(encoding="utf-8")
+
+    rebaixados_section = index_text.split("### Rebaixados para grao objeto", 1)[1].split("### ", 1)[0]
+    assert "TB_PROJETOS" not in rebaixados_section
+    assert "STANDARD" not in rebaixados_section
+    assert "DBMS_LOB" not in rebaixados_section
+    assert "SIBLING_PKG" in rebaixados_section
+
+    assert "### Sem PL/SQL" in index_text
+    assert "### Fronteira de schema" in index_text
 
 
 # --------------------------------------------------------------------------
