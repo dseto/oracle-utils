@@ -1,138 +1,122 @@
 {
-  "contract": "depgraph-granular",
-  "compiled_at": "2026-08-16T15:17:43.474104+00:00",
+  "contract": "dynsql-dossie",
+  "compiled_at": "2026-08-17T13:50:13.206690+00:00",
   "compiled_with_version": "0.35.0",
   "stop_conditions": {
     "typed": [],
     "advisory": [
-      "Travessia nao terminar em fixture com ciclo (timeout do teste estourar) -- parar e redesenhar o visited-set, NUNCA aumentar o timeout nem por cap de profundidade para mascarar",
-      "Contadores da secao COBERTURA nao fecharem -- parar e achar a causa, NUNCA ajustar o numero para fechar",
-      "Precisar alterar plsqlflow/graph.py ou o modo flow (congelados por golden test do contrato plsqlflow-py) -- parar e devolver ao humano",
-      "Qualquer DDL/DML contra o banco (CREATE/ALTER/DROP/INSERT/UPDATE/DELETE) -- parar e pedir confirmacao explicita; as tarefas deste contrato sao somente-leitura",
-      "3 falhas consecutivas da mesma suite de teste -- parar"
+      "Precisar executar o SQL dinamico encontrado, o subprograma que o contem, ou o processo analisado -- parar e devolver ao humano",
+      "Precisar consultar V$SQL, DBA_HIST_*, DBMSHP_* ou qualquer fonte de runtime -- parar e devolver ao humano",
+      "Precisar afirmar qual e o alvo de um fragmento dinamico nao resolvido -- parar e devolver ao humano",
+      "Precisar alterar plsqlflow/graph.py ou plsqlflow/report.py (congelados por golden test do contrato plsqlflow-py) -- parar e devolver ao humano",
+      "Precisar de base de validacao alem da fixture sintetica e do schema GESTAO_OO -- parar e devolver ao humano",
+      "3 falhas consecutivas da mesma suite de teste -- parar e devolver ao humano"
     ]
   },
   "features": [
     {
       "id": "T-01",
-      "desc": "Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado",
+      "desc": "Cada ponto de SQL dinamico passa a declarar que tipo de comando ele obrigatoriamente e, com a prova, incluindo as formas que a amostra nao tinha",
       "files": [
-        "plsqlflow/attribute.py",
-        "tests/test_attribute.py",
-        "tests/fixtures/plscope_tree.json"
+        "plsqlflow/dynsite.py",
+        "tests/test_dynsite_categoria.py",
+        "tests/fixtures/dynsite_formas.json"
       ],
-      "verify_cmd": "pytest tests/test_attribute.py -q",
+      "verify_cmd": "pytest tests/test_dynsite_categoria.py -q",
       "depends": [],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-02",
-      "desc": "As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma",
+      "desc": "O texto do SQL montado em runtime passa a aparecer reconstruido, com os pedacos conhecidos, os que faltam e os que so entram sob condicao",
       "files": [
-        "sql/flow/plscope_tree_batch.sql",
-        "sql/flow/plscope_statements_batch.sql",
-        "plsqlflow/extract.py",
-        "tests/test_extract_plscope_tree.py",
-        "plsqlflow/queries.py"
+        "plsqlflow/dynsite_template.py",
+        "tests/test_dynsite_template.py"
       ],
-      "verify_cmd": "pytest tests/test_extract_plscope_tree.py -q",
-      "depends": [],
+      "verify_cmd": "pytest tests/test_dynsite_template.py -q",
+      "depends": [
+        "T-01"
+      ],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-03",
-      "desc": "O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular",
+      "desc": "Quando a montagem do SQL passa por uma funcao, o mapa so entra nela se o resultado for unico; caso contrario declara a funcao e para",
       "files": [
-        "plsqlflow/procgraph.py",
-        "tests/test_procgraph_bfs.py",
-        "tests/fixtures/procgraph_demo.json"
+        "plsqlflow/dynsite_template.py",
+        "tests/test_dynsite_travessia.py"
       ],
-      "verify_cmd": "pytest tests/test_procgraph_bfs.py -q",
+      "verify_cmd": "pytest tests/test_dynsite_travessia.py -q",
       "depends": [
-        "T-01",
         "T-02"
       ],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-04",
-      "desc": "Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado",
+      "desc": "Cada pedaco faltante do SQL passa a dizer de onde vem, e quando o codigo prova que e nome de objeto isso fica registrado",
       "files": [
-        "plsqlflow/procgraph.py",
-        "tests/test_procgraph_fallback.py"
+        "plsqlflow/dynsite_origin.py",
+        "tests/test_dynsite_origem.py"
       ],
-      "verify_cmd": "pytest tests/test_procgraph_fallback.py -q",
+      "verify_cmd": "pytest tests/test_dynsite_origem.py -q",
       "depends": [
-        "T-03"
+        "T-02"
       ],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-05",
-      "desc": "O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara",
+      "desc": "Para pedaco que vem de parametro, o mapa lista quem chama dentro do processo e avisa quando existem chamadores fora dele",
       "files": [
-        "plsqlflow/procgraph_access.py",
-        "tests/test_procgraph_access.py",
-        "plsqlflow/procgraph.py",
-        "plsqlflow/attribute.py"
+        "plsqlflow/dynsite_origin.py",
+        "plsqlflow/extract.py",
+        "plsqlflow/queries.py",
+        "sql/flow/dependentes_batch.sql",
+        "tests/test_dynsite_call_sites.py"
       ],
-      "verify_cmd": "pytest tests/test_procgraph_access.py -q",
+      "verify_cmd": "pytest tests/test_dynsite_call_sites.py -q",
       "depends": [
-        "T-03"
+        "T-04"
       ],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-06",
-      "desc": "Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego",
+      "desc": "O dossie passa a ser gravado em duas formas -- uma para maquina e uma legivel derivada dela -- com a chave pronta para a analise seguinte",
       "files": [
-        "plsqlflow/depgraph.py",
-        "tests/test_depgraph_plscope_settings.py",
-        "plsqlflow/depgraph_render.py"
+        "plsqlflow/dynsite_render.py",
+        "tests/test_dynsite_dossie.py"
       ],
-      "verify_cmd": "pytest tests/test_depgraph_plscope_settings.py -q",
-      "depends": [],
+      "verify_cmd": "pytest tests/test_dynsite_dossie.py -q",
+      "depends": [
+        "T-01",
+        "T-03",
+        "T-05"
+      ],
       "cwd": null,
-      "passes": true
+      "passes": false
     },
     {
       "id": "T-07",
-      "desc": "Toda referencia circular do processo aparece nomeada no mapa, em vez de virar um marcador solto de aresta",
+      "desc": "O dossie sai em toda geracao do mapa granular, vazio e declarado quando nao ha nada, e o resto do mapa aponta para ele sem contradize-lo",
       "files": [
-        "plsqlflow/procgraph_cycles.py",
-        "tests/test_procgraph_cycles.py"
-      ],
-      "verify_cmd": "pytest tests/test_procgraph_cycles.py -q",
-      "depends": [
-        "T-03"
-      ],
-      "cwd": null,
-      "passes": true
-    },
-    {
-      "id": "T-08",
-      "desc": "O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto",
-      "files": [
-        "plsqlflow/procgraph_render.py",
         "plsqlflow/cli.py",
-        "tests/test_procgraph_render.py",
-        "tests/test_cli_granular.py",
-        "docs/backlog-depgraph-pontos-cegos.md"
+        "plsqlflow/procgraph_render.py",
+        "plsqlflow/dynsite_render.py",
+        "tests/test_dynsite_integracao.py"
       ],
-      "verify_cmd": "pytest tests/test_procgraph_render.py tests/test_cli_granular.py -q",
+      "verify_cmd": "pytest tests/test_dynsite_integracao.py -q",
       "depends": [
-        "T-03",
-        "T-04",
-        "T-05",
-        "T-07"
+        "T-06"
       ],
       "cwd": null,
-      "passes": true
+      "passes": false
     }
   ]
 }
