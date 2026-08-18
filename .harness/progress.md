@@ -1,6 +1,6 @@
 # Claude Progress
 
-Contrato: `depgraph-granular`
+Contrato: `dynsql-dossie`
 
 _Demanda ENCERRADA por `harness finish`._
 
@@ -8,14 +8,13 @@ _Demanda ENCERRADA por `harness finish`._
 
 | id | desc | status |
 | --- | --- | --- |
-| T-01 | Cada chamada e cada comando SQL passa a ser atribuido ao subprograma exato que o executa, incluindo subprograma aninhado | done |
-| T-02 | As consultas ao dicionario passam a trazer os dados que permitem a atribuicao por subprograma | done |
-| T-03 | O mapa passa a ser gerado a partir de uma procedure especifica, descendo recursivamente por todas as chamadas ate o fim do processo, mesmo havendo referencia circular | done |
-| T-04 | Um objeto sem PL/Scope no meio da cadeia deixa de ser um buraco no mapa: a travessia continua atraves dele, com o motivo declarado | done |
-| T-05 | O mapa passa a mostrar, por subprograma, quais tabelas e colunas le e escreve, qual estado de package compartilha e quais triggers dispara | done |
-| T-06 | Objeto compilado pela metade deixa de ser reportado como coberto: falta de STATEMENTS:ALL passa a aparecer como ponto cego | done |
-| T-07 | Toda referencia circular do processo aparece nomeada no mapa, em vez de virar um marcador solto de aresta | done |
-| T-08 | O mapa passa a declarar o que cobriu e o que nao cobriu, com contagem que fecha, e o modo antigo continua intacto | done |
+| T-01 | Cada ponto de SQL dinamico passa a declarar que tipo de comando ele obrigatoriamente e, com a prova, incluindo as formas que a amostra nao tinha | done |
+| T-02 | O texto do SQL montado em runtime passa a aparecer reconstruido, com os pedacos conhecidos, os que faltam e os que so entram sob condicao | done |
+| T-03 | Quando a montagem do SQL passa por uma funcao, o mapa so entra nela se o resultado for unico; caso contrario declara a funcao e para | done |
+| T-04 | Cada pedaco faltante do SQL passa a dizer de onde vem, e quando o codigo prova que e nome de objeto isso fica registrado | done |
+| T-05 | Para pedaco que vem de parametro, o mapa lista quem chama dentro do processo e avisa quando existem chamadores fora dele | done |
+| T-06 | O dossie passa a ser gravado em duas formas -- uma para maquina e uma legivel derivada dela -- com a chave pronta para a analise seguinte | done |
+| T-07 | O dossie sai em toda geracao do mapa granular, vazio e declarado quando nao ha nada, e o resto do mapa aponta para ele sem contradize-lo | done |
 
 ## Última atualização
 

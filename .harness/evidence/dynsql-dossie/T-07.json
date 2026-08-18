@@ -1,0 +1,15 @@
+{
+  "feature_id": "T-07",
+  "contract": "dynsql-dossie",
+  "desc": "O dossie sai em toda geracao do mapa granular, vazio e declarado quando nao ha nada, e o resto do mapa aponta para ele sem contradize-lo",
+  "files": [
+    "plsqlflow/cli.py",
+    "plsqlflow/procgraph_render.py",
+    "plsqlflow/dynsite_render.py",
+    "tests/test_dynsite_integracao.py"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_integracao.py -q",
+  "recorded_at": "2026-08-17T14:59:48.455268+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:11ec6436184bae299738d10cbd97823a739caae75685f19ffcef096ac9ea3263"
+}

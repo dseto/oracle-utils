@@ -215,6 +215,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from . import __version__ as _PLSQLFLOW_VERSION
 from . import depgraph
 from .depgraph_render import sanitize_component
+from .dynsite_render import DynSiteRecord, render_jsonl, render_markdown
 from .procgraph import ProcEdge, ProcGraphResult, ProcNode
 from .procgraph_cycles import find_cycles
 
@@ -926,7 +927,11 @@ def _render_trigger_lines(outbound: Sequence[ProcEdge], inbound: Sequence[ProcEd
     return lines
 
 
-def _render_dynsql_lines(outbound: Sequence[ProcEdge]) -> List[str]:
+def _render_dynsql_lines(
+    outbound: Sequence[ProcEdge],
+    ref: str,
+    dynamic_sql_by_site: Optional[Dict[Tuple[str, int], DynSiteRecord]] = None,
+) -> List[str]:
     """Secao `## SQL Dinamico` do node .md -- equivalente granular do
     `_render_dynsql_lines` de `depgraph_render.py`.
 
@@ -942,7 +947,16 @@ def _render_dynsql_lines(outbound: Sequence[ProcEdge]) -> List[str]:
     O nivel (`confidence`: exact/partial/opaque) vai explicito na linha: e
     a diferenca entre "este alvo esta provado" e "este alvo e um palpite
     que alguem precisa conferir a mao antes de migrar".
-    """
+
+    `dynamic_sql_by_site` (T-07, contrato dynsql-dossie): mapa OPCIONAL
+    `(ref_do_no, linha) -> DynSiteRecord` do dossie estatico -- quando o
+    site correspondente esta disponivel, a linha ganha `categoria_provada`/
+    `pode_invocar_procedure` e um link de volta ao dossie (`dynamic_sql.
+    jsonl`/`SQL-DINAMICO.md`), NUNCA o template/lacunas inteiros (backlog
+    secao 5.1: "so o que muda a leitura do no" -- o detalhe completo mora
+    so no dossie). `None`/ausente preserva o comportamento anterior a
+    T-07 byte a byte (parametro tem default, nunca quebra chamada
+    existente)."""
     entries = sorted(
         (e for e in outbound if e.edge_type == "DYNAMIC_SQL"),
         key=lambda e: (e.line if e.line is not None else -1, e.to_ref),
@@ -950,11 +964,28 @@ def _render_dynsql_lines(outbound: Sequence[ProcEdge]) -> List[str]:
     lines = []
     for e in entries:
         line_label = "L{}".format(e.line) if e.line is not None else "L?"
-        lines.append("- {} [{}] -> {}".format(line_label, e.confidence, e.to_ref))
+        text = "- {} [{}] -> {}".format(line_label, e.confidence, e.to_ref)
+        record = dynamic_sql_by_site.get((ref, e.line)) if dynamic_sql_by_site and e.line is not None else None
+        if record is not None:
+            text += (
+                " | dossie: categoria_provada={} pode_invocar_procedure={} "
+                "(ver dynamic_sql.jsonl / SQL-DINAMICO.md, site_id={})".format(
+                    record.categoria_provada,
+                    "sim" if record.pode_invocar_procedure else "nao",
+                    record.site_id,
+                )
+            )
+        lines.append(text)
     return lines
 
 
-def render_node_md(node: ProcNode, ref: str, outbound: Sequence[ProcEdge], inbound: Sequence[ProcEdge]) -> str:
+def render_node_md(
+    node: ProcNode,
+    ref: str,
+    outbound: Sequence[ProcEdge],
+    inbound: Sequence[ProcEdge],
+    dynamic_sql_by_site: Optional[Dict[Tuple[str, int], DynSiteRecord]] = None,
+) -> str:
     lines: List[str] = ["# {}".format(ref), _format_metadata_line(node), ""]
 
     sections: List[Tuple[str, List[str]]] = [
@@ -963,7 +994,7 @@ def render_node_md(node: ProcNode, ref: str, outbound: Sequence[ProcEdge], inbou
         ("## Tabelas acessadas", _render_table_lines(outbound, inbound)),
         ("## Estado de package", _render_state_lines(outbound)),
         ("## Triggers ativados", _render_trigger_lines(outbound, inbound)),
-        ("## SQL Dinâmico", _render_dynsql_lines(outbound)),
+        ("## SQL Dinâmico", _render_dynsql_lines(outbound, ref, dynamic_sql_by_site)),
     ]
     for title, content in sections:
         if not content:
@@ -1007,7 +1038,39 @@ def render_edges_jsonl(edges: Sequence[ProcEdge]) -> str:
 # --------------------------------------------------------------------------
 
 
-def render_index_md(result: ProcGraphResult, coverage: CoverageReport, meta_params: Dict[str, Any]) -> str:
+def _blind_spot_dynsql_links(
+    result: ProcGraphResult, dynamic_sql_by_site: Optional[Dict[Tuple[str, int], DynSiteRecord]]
+) -> Dict[str, DynSiteRecord]:
+    """T-07 (contrato dynsql-dossie): mapeia a STRING exata de
+    `result.blind_spots` (mesmo formato que `_ProcGraphEngine.to_result`
+    monta em procgraph.py, linha ~1662 -- `"{from_ref} {line_label} [{confi
+    dence}] -> {to_ref}"`) para o `DynSiteRecord` correspondente do dossie,
+    quando existe. So serve para acrescentar o LINK de volta na secao
+    PONTOS CEGOS abaixo -- procgraph.py (congelado) continua a UNICA fonte
+    do texto do ponto cego em si, nunca recalculado aqui."""
+    links: Dict[str, DynSiteRecord] = {}
+    if not dynamic_sql_by_site:
+        return links
+    for edge in result.edges:
+        if edge.edge_type != "DYNAMIC_SQL" or edge.confidence not in ("partial", "opaque"):
+            continue
+        if edge.line is None:
+            continue
+        record = dynamic_sql_by_site.get((edge.from_ref, edge.line))
+        if record is None:
+            continue
+        line_label = "L{}".format(edge.line)
+        spot_text = "{} {} [{}] -> {}".format(edge.from_ref, line_label, edge.confidence, edge.to_ref)
+        links[spot_text] = record
+    return links
+
+
+def render_index_md(
+    result: ProcGraphResult,
+    coverage: CoverageReport,
+    meta_params: Dict[str, Any],
+    dynamic_sql_by_site: Optional[Dict[Tuple[str, int], DynSiteRecord]] = None,
+) -> str:
     root_ref = meta_params.get("root_ref")
 
     lines: List[str] = []
@@ -1042,9 +1105,18 @@ def render_index_md(result: ProcGraphResult, coverage: CoverageReport, meta_para
     # mesmo fato.
     lines.append("## PONTOS CEGOS")
     blind_lines: List[str] = []
+    dynsql_links = _blind_spot_dynsql_links(result, dynamic_sql_by_site)
     if result.blind_spots:
         for spot in sorted(set(result.blind_spots)):
-            blind_lines.append("- {}".format(spot))
+            record = dynsql_links.get(spot)
+            if record is not None:
+                blind_lines.append(
+                    "- {} (ver dynamic_sql.jsonl / SQL-DINAMICO.md, site_id={})".format(
+                        spot, record.site_id
+                    )
+                )
+            else:
+                blind_lines.append("- {}".format(spot))
     if result.truncated:
         blind_lines.append("### Truncamento")
         blind_lines.append("- motivo: {}".format(result.truncation_reason))
@@ -1117,8 +1189,25 @@ def render_meta_json(result: ProcGraphResult, meta_params: Dict[str, Any]) -> st
 # --------------------------------------------------------------------------
 
 
+def _dynamic_sql_by_site_map(
+    dynamic_sql_records: Sequence[DynSiteRecord],
+) -> Dict[Tuple[str, int], DynSiteRecord]:
+    """`(ref_do_no, linha) -> DynSiteRecord`, uma entrada por registro do
+    dossie (T-07) -- `ref_do_no` e `OWNER.OBJETO.SUBPROGRAMA`, exatamente o
+    formato de `node_ref`/`ProcEdge.from_ref` para arestas DYNAMIC_SQL (ver
+    `procgraph_access._dynamic_sql_edges`), montado aqui a partir dos
+    campos soltos do proprio `DynSiteRecord` (nunca reparsing de `site_id`)."""
+    return {
+        ("{}.{}.{}".format(rec.owner, rec.object_name, rec.subprogram), rec.line): rec
+        for rec in dynamic_sql_records
+    }
+
+
 def render_graph(
-    result: ProcGraphResult, out_dir: Union[Path, str], meta_params: Optional[Dict[str, Any]] = None
+    result: ProcGraphResult,
+    out_dir: Union[Path, str],
+    meta_params: Optional[Dict[str, Any]] = None,
+    dynamic_sql_records: Optional[Sequence[DynSiteRecord]] = None,
 ) -> List[Path]:
     """Grava a arvore completa (ver docstring do modulo) em `out_dir`.
     `meta_params["capabilities"]` alimenta a secao COBERTURA (ver
@@ -1126,10 +1215,23 @@ def render_graph(
     chamador (ex.: `root_ref` rotula o cabecalho do INDEX.md, mesma
     convencao de `depgraph_render.render_graph`).
 
+    `dynamic_sql_records` (T-07, contrato dynsql-dossie): lista de
+    `DynSiteRecord` do dossie estatico de SQL dinamico (`plsqlflow.
+    dynsite_render`), montada por quem chama (`cli._build_dynamic_sql_
+    records`) a partir de `result.edges` -- este modulo NAO descobre sitio
+    nenhum sozinho, so grava o que recebe. Default `None` (tratado como
+    lista vazia) preserva byte a byte o comportamento anterior a T-07 para
+    todo chamador/teste que ainda nao passa este parametro -- os dois
+    arquivos do dossie (`dynamic_sql.jsonl`/`SQL-DINAMICO.md`) SEMPRE saem,
+    mesmo vazios-mas-declarados (backlog secao 12, decisao 1: "vazio e
+    declarado, nunca ausente" -- nunca condicional a "so quando ha sitio").
+
     ORDEM CRITICA: `build_coverage` roda ANTES de qualquer `mkdir`/escrita
     -- uma reconciliacao quebrada (`CoverageError`) impede que QUALQUER
     arquivo deste grafo seja gravado, mesmo parcialmente (regra dura do
-    contrato: "o grafo nao e gravado como valido").
+    contrato: "o grafo nao e gravado como valido"). O dossie de SQL
+    dinamico tambem so e gravado DEPOIS dessa validacao passar -- mesma
+    ordem critica do resto deste modulo.
 
     Idempotencia byte a byte: mesma disciplina de `depgraph_render.
     render_graph` -- toda escrita usa `encoding="utf-8"`/`newline="\\n"`
@@ -1139,6 +1241,7 @@ def render_graph(
     out_dir = Path(out_dir)
     meta_params = dict(meta_params or {})
     capabilities = meta_params.get("capabilities") or {}
+    dynamic_sql_records = list(dynamic_sql_records or [])
 
     coverage = build_coverage(result, capabilities)
 
@@ -1157,12 +1260,16 @@ def render_graph(
         outbound_by_ref.setdefault(e.from_ref, []).append(e)
         inbound_by_ref.setdefault(e.to_ref, []).append(e)
 
+    dynamic_sql_by_site = _dynamic_sql_by_site_map(dynamic_sql_records)
+
     written: List[Path] = []
 
     for node in result.nodes:
         ref = node_ref(node)
         path = nodes_dir / node_filename(node.owner, node.object_name, node.subprogram)
-        text = render_node_md(node, ref, outbound_by_ref.get(ref, []), inbound_by_ref.get(ref, []))
+        text = render_node_md(
+            node, ref, outbound_by_ref.get(ref, []), inbound_by_ref.get(ref, []), dynamic_sql_by_site
+        )
         _write_text(path, text)
         written.append(path)
 
@@ -1171,11 +1278,22 @@ def render_graph(
     written.append(edges_path)
 
     index_path = out_dir / "INDEX.md"
-    _write_text(index_path, render_index_md(result, coverage, meta_params))
+    _write_text(index_path, render_index_md(result, coverage, meta_params, dynamic_sql_by_site))
     written.append(index_path)
 
     meta_path = out_dir / "meta.json"
     _write_text(meta_path, render_meta_json(result, meta_params))
     written.append(meta_path)
+
+    # T-07: dossie de SQL dinamico -- SEMPRE gravado (vazio-mas-declarado
+    # quando `dynamic_sql_records` esta vazio/None), DEPOIS de build_coverage
+    # ja ter validado acima (mesma ordem critica do resto desta funcao).
+    dynsql_path = out_dir / "dynamic_sql.jsonl"
+    _write_text(dynsql_path, render_jsonl(dynamic_sql_records))
+    written.append(dynsql_path)
+
+    sql_dinamico_path = out_dir / "SQL-DINAMICO.md"
+    _write_text(sql_dinamico_path, render_markdown(dynamic_sql_records))
+    written.append(sql_dinamico_path)
 
     return sorted(written)

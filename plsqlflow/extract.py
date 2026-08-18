@@ -129,6 +129,21 @@ class DepsDirectBatchRow:
 
 
 @dataclass
+class DependentesBatchRow:
+    # Inverso de DepsDirectBatchRow (contrato dynsql-dossie, T-05,
+    # dependentes_batch.sql): owner/name aqui sao o DEPENDENTE, nao a
+    # origem -- referenced_name e qual objeto do lote (:object_list) ele
+    # referencia. Grao OBJETO: ALL_DEPENDENCIES nao tem granularidade de
+    # subprograma, entao esta linha nao diz QUAL subprograma do dependente
+    # chama, so QUE o objeto dependente existe e aponta pra ca.
+    owner: str
+    name: str
+    type: str
+    referenced_name: str
+    dependency_type: str
+
+
+@dataclass
 class TriggerRow:
     table_owner: str
     table_name: str
@@ -310,6 +325,22 @@ def fetch_deps_direct(conn, owner: str, object_name: str) -> List[DepsDirectRow]
     binds = {"owner": owner, "object_name": object_name}
     rows = db.run_query(conn, queries.QUERY_TEXT["deps_direct.sql"], binds)
     return [DepsDirectRow(**_to_kwargs(row)) for row in rows]
+
+
+def fetch_dependentes_batch(
+    conn, owner: str, object_list: Optional[str]
+) -> List[DependentesBatchRow]:
+    """Quem DEPENDE dos objetos de `object_list` (dono `owner`) -- inverso de
+    `fetch_deps_direct_batch` (dependentes_batch.sql, contrato dynsql-dossie,
+    T-05). Grao OBJETO, visibilidade limitada ao usuario atual
+    (ALL_DEPENDENCIES, nao DBA_). Usada como SINALIZADOR de chamadores fora
+    do fechamento do mapa (docs/backlog-sql-dinamico-estatico.md, secao
+    4.3.1) -- nunca como enumeracao completa de chamadores; quem calcula o
+    sinalizador a partir do resultado e `dynsite_origin.attach_call_sites`
+    (funcao pura, sem conexao)."""
+    binds = {"owner": owner, "object_list": object_list}
+    rows = db.run_query(conn, queries.QUERY_TEXT["dependentes_batch.sql"], binds)
+    return [DependentesBatchRow(**_to_kwargs(row)) for row in rows]
 
 
 def fetch_triggers_for_tables(conn, owner: str, table_list: str) -> List[TriggerRow]:

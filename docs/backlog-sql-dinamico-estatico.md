@@ -524,6 +524,49 @@ strings nunca batem, então `## Chamado por` sai vazia em todo nó
 `edges.jsonl` e na seção `## Chama` do chamador. Fix mecânico: unificar as
 duas fontes de identidade em `_unresolved_ref`/`_ensure_unresolved_node`.
 
+### 10.3 Travessia de função (T-03) superconta RETURN de subprograma aninhado
+
+Achado na 2ª rodada de revisão cega do contrato `dynsql-dossie`, depois da
+correção do defeito bloqueante da 1ª rodada (contagem de `RETURN` quebrada
+quando a própria expressão continha `IS`/`AS` — `RETURN v IS NOT NULL;`,
+`RETURN (SELECT c AS x FROM d);` — corrigido ancorando a exclusão do
+cabeçalho no casamento gramatical `FUNCTION nome(params) RETURN tipo
+IS/AS`, não mais em heurística de "primeiro `;` antes do primeiro `IS`/
+`AS`").
+
+A correção resolveu o defeito original, mas `_return_statement_start_lines`
+(`plsqlflow/dynsite_template.py`) varre o texto INTEIRO recebido como
+`function_source_lines`, sem escopo por profundidade de aninhamento. Um
+subprograma local (`FUNCTION`/`PROCEDURE` declarado na seção declarativa da
+função externa) tem o próprio `RETURN` contado junto com o da função
+externa — **supercontagem**, nunca subcontagem: uma função com exatamente 1
+`RETURN` genuíno mais um subprograma aninhado com o seu próprio `RETURN`
+(inclusive `RETURN;` vazio de uma `PROCEDURE` aninhada) é contada como 2, e
+a travessia (backlog 4.2.1) recusa quando deveria atravessar.
+
+**Falha para o lado seguro**: é o mesmo sentido de erro que a regra de
+desempate já manda tomar na dúvida (recusar em vez de atravessar), nunca o
+oposto (nunca fabrica uma reconstrução a partir do RETURN errado). Por isso
+é registrado como não-bloqueante, não como o defeito da 1ª rodada.
+
+**Dormente na integração atual**: `plsqlflow/cli.py` (T-07,
+`_build_dynamic_sql_records`) chama `resolve_gaps(template,
+function_sources={})` — nenhuma função é passada para travessia hoje, então
+este defeito não tem como aparecer no dossiê gerado enquanto essa limitação
+existir. Só passa a importar quando um contrato futuro ligar
+`function_sources` a fonte real.
+
+Fix (não feito aqui, fora do escopo desta rodada): escopar
+`_return_statement_start_lines` pela profundidade de aninhamento de
+subprograma — parar de contar `RETURN` assim que a varredura entra na
+declaração de um `FUNCTION`/`PROCEDURE` local (mesmo espírito de
+`_function_header_spans`, mas delimitando um span de CORPO aninhado inteiro
+a excluir, não só a linha de cabeçalho) e só voltar a contar `RETURN` da
+função externa depois do `END <nome do aninhado>;` correspondente. Precisa
+entrar junto com a tarefa que ligar `function_sources` a dado real — antes
+disso não há caso de teste vivo para provar a correção contra o pipeline de
+verdade.
+
 ## 11. Não-objetivos
 
 - Não resolver o alvo de nenhum SQL dinâmico.

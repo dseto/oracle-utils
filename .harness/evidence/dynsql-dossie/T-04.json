@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-04",
+  "contract": "dynsql-dossie",
+  "desc": "Cada pedaco faltante do SQL passa a dizer de onde vem, e quando o codigo prova que e nome de objeto isso fica registrado",
+  "files": [
+    "plsqlflow/dynsite_origin.py",
+    "tests/test_dynsite_origem.py"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_origem.py -q",
+  "recorded_at": "2026-08-17T14:31:33.459488+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:58b5c0aa1e78cb3f3371caef34acdaa0ebe1361576b788adcba73cd02c51d9dd"
+}

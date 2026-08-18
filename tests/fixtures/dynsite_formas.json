@@ -1,0 +1,284 @@
+{
+  "_note": "Casos sinteticos para T-01 (contrato dynsql-dossie) -- cada chave cobre uma forma da tabela do backlog-sql-dinamico-estatico.md secao 4.1/4.6. 'source' e uma lista de linhas (indice 0 = linha 1, mesma convencao de dynsql.rows_from_lines); 'line' e a linha do sitio de execucao. A maioria das formas NAO esta na amostra real (GESTAO_OO) -- e exatamente essa cobertura que o contrato pede. O ultimo caso ('regressao_pkg_dynamic_evaluator_l73') e reconstrucao sintetica em volta do texto REAL citado no backlog (secao 3, L73 do PKG_DYNAMIC_EVALUATOR): 'EXECUTE IMMEDIATE v_sql USING OUT v_resultado, IN p_id_entidade;', preservado literalmente e posicionado na linha 73 (linhas em volta sao filler, nao o codigo real do objeto).",
+
+  "open_for_query": {
+    "description": "OPEN cur FOR v_sql -- so aceita query (backlog 4.1, linha 1 da tabela)",
+    "source": [
+      "PROCEDURE p_open_for_query IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_cursor SYS_REFCURSOR;",
+      "BEGIN",
+      "  v_sql := 'SELECT 1 FROM DUAL';",
+      "  OPEN v_cursor FOR v_sql;",
+      "END p_open_for_query;"
+    ],
+    "line": 6,
+    "expect": {
+      "exec_kind": "OPEN_FOR",
+      "categoria_provada": "QUERY",
+      "pode_invocar_procedure": false,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_into_query_linha_unica": {
+    "description": "EXECUTE IMMEDIATE v_sql INTO a, b, c -- sem BULK COLLECT, query de linha unica com 3 colunas (backlog 4.1, linha 2 da tabela)",
+    "source": [
+      "PROCEDURE p_into_linha_unica IS",
+      "  v_sql VARCHAR2(200);",
+      "  a NUMBER;",
+      "  b NUMBER;",
+      "  c NUMBER;",
+      "BEGIN",
+      "  v_sql := 'SELECT x, y, z FROM t';",
+      "  EXECUTE IMMEDIATE v_sql INTO a, b, c;",
+      "END p_into_linha_unica;"
+    ],
+    "line": 8,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "QUERY_LINHA_UNICA",
+      "pode_invocar_procedure": false,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": 3,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_bulk_collect_into_query_multi_linha": {
+    "description": "EXECUTE IMMEDIATE v_sql BULK COLLECT INTO v_tab -- query multi-linha, aridade vem da colecao (backlog 4.6, linha 2 da tabela)",
+    "source": [
+      "PROCEDURE p_bulk_collect IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_tab SYS.ODCINUMBERLIST;",
+      "BEGIN",
+      "  v_sql := 'SELECT x FROM t';",
+      "  EXECUTE IMMEDIATE v_sql BULK COLLECT INTO v_tab;",
+      "END p_bulk_collect;"
+    ],
+    "line": 6,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "QUERY_MULTI_LINHA",
+      "pode_invocar_procedure": false,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": 1,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_using_out_bloco_ou_returning": {
+    "description": "EXECUTE IMMEDIATE v_sql USING v_id, OUT v_result -- tem bind OUT, bloco anonimo ou RETURNING (backlog 4.1, linha 3 da tabela)",
+    "source": [
+      "PROCEDURE p_using_out IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_id NUMBER := 1;",
+      "  v_result NUMBER;",
+      "BEGIN",
+      "  v_sql := 'BEGIN pkg.faz_algo(:1, :2); END;';",
+      "  EXECUTE IMMEDIATE v_sql USING v_id, OUT v_result;",
+      "END p_using_out;"
+    ],
+    "line": 7,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "BLOCO_OU_RETURNING",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_using_in_nao_determinavel": {
+    "description": "EXECUTE IMMEDIATE v_sql USING IN v_id -- so bind IN, nao restringe forma (backlog 4.6, linha 3 da tabela)",
+    "source": [
+      "PROCEDURE p_using_in IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_id NUMBER := 1;",
+      "BEGIN",
+      "  v_sql := 'UPDATE t SET x = 1 WHERE id = :1';",
+      "  EXECUTE IMMEDIATE v_sql USING IN v_id;",
+      "END p_using_in;"
+    ],
+    "line": 6,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "NAO_DETERMINAVEL",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": false,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_bare_nao_determinavel": {
+    "description": "EXECUTE IMMEDIATE v_sql sozinho, sem INTO/USING -- pode ser DDL, DML ou bloco (backlog 4.1, linha 4 da tabela)",
+    "source": [
+      "PROCEDURE p_bare IS",
+      "  v_sql VARCHAR2(200);",
+      "BEGIN",
+      "  v_sql := 'ALTER SESSION SET NLS_DATE_FORMAT = ''YYYY-MM-DD''';",
+      "  EXECUTE IMMEDIATE v_sql;",
+      "END p_bare;"
+    ],
+    "line": 5,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "NAO_DETERMINAVEL",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": false,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "dbms_sql_parse_nao_determinavel": {
+    "description": "DBMS_SQL.PARSE(...) -- API completa, PARSE sozinho nao prova nada (backlog 4.1, linha 5 da tabela)",
+    "source": [
+      "PROCEDURE p_dbms_sql_parse IS",
+      "  v_cursor INTEGER;",
+      "  v_sql VARCHAR2(200);",
+      "BEGIN",
+      "  v_cursor := DBMS_SQL.OPEN_CURSOR;",
+      "  v_sql := 'DELETE FROM t';",
+      "  DBMS_SQL.PARSE(v_cursor, v_sql, DBMS_SQL.NATIVE);",
+      "END p_dbms_sql_parse;"
+    ],
+    "line": 7,
+    "expect": {
+      "exec_kind": "DBMS_SQL_PARSE",
+      "categoria_provada": "NAO_DETERMINAVEL",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": false,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "site_em_loop": {
+    "description": "sitio dentro de FOR ... LOOP / END LOOP -- em_loop=true (backlog 4.6, linha 6 da tabela)",
+    "source": [
+      "PROCEDURE p_em_loop IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_dummy NUMBER;",
+      "BEGIN",
+      "  FOR i IN 1..10 LOOP",
+      "    v_sql := 'BEGIN pkg.iterar(:1); END;';",
+      "    EXECUTE IMMEDIATE v_sql USING OUT v_dummy, IN i;",
+      "  END LOOP;",
+      "END p_em_loop;"
+    ],
+    "line": 7,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "BLOCO_OU_RETURNING",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": null,
+      "em_loop": true
+    }
+  },
+
+  "site_fora_de_loop": {
+    "description": "sitio fora de qualquer loop -- em_loop=false, mesmo havendo um LOOP anterior ja fechado no mesmo subprograma",
+    "source": [
+      "PROCEDURE p_fora_de_loop IS",
+      "  v_sql VARCHAR2(200);",
+      "BEGIN",
+      "  FOR i IN 1..10 LOOP",
+      "    NULL;",
+      "  END LOOP;",
+      "  v_sql := 'BEGIN pkg.rodar; END;';",
+      "  EXECUTE IMMEDIATE v_sql;",
+      "END p_fora_de_loop;"
+    ],
+    "line": 8,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "NAO_DETERMINAVEL",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": false,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_literal_estatico_commit": {
+    "description": "EXECUTE IMMEDIATE 'COMMIT' -- literal 100% estatico, sem INTO/USING; a forma nua continua NAO_DETERMINAVEL mesmo sem lacuna nenhuma (backlog 4.6, linha 7 da tabela) -- T-01 nunca olha o conteudo da string",
+    "source": [
+      "PROCEDURE p_literal_commit IS",
+      "BEGIN",
+      "  EXECUTE IMMEDIATE 'COMMIT';",
+      "END p_literal_commit;"
+    ],
+    "line": 3,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "NAO_DETERMINAVEL",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": false,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "execute_immediate_multiplos_out": {
+    "description": "EXECUTE IMMEDIATE v_sql USING OUT v_r1, OUT v_r2 -- multiplos binds OUT, ainda BLOCO_OU_RETURNING",
+    "source": [
+      "PROCEDURE p_multiplos_out IS",
+      "  v_sql VARCHAR2(200);",
+      "  v_r1 NUMBER;",
+      "  v_r2 NUMBER;",
+      "BEGIN",
+      "  v_sql := 'BEGIN pkg.duplo(:1, :2); END;';",
+      "  EXECUTE IMMEDIATE v_sql USING OUT v_r1, OUT v_r2;",
+      "END p_multiplos_out;"
+    ],
+    "line": 7,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "BLOCO_OU_RETURNING",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": null,
+      "em_loop": false
+    }
+  },
+
+  "regressao_pkg_dynamic_evaluator_l73": {
+    "description": "Regressao ligada a evidencia real: GESTAO_OO.PKG_DYNAMIC_EVALUATOR, PACKAGE BODY, linha 73 (backlog secao 3): 'EXECUTE IMMEDIATE v_sql USING OUT v_resultado, IN p_id_entidade;' -- statement preservado literalmente, na mesma linha (73) citada no backlog; as linhas em volta sao filler sintetico (nao o codigo real do objeto, so preenchimento para posicionar o statement na linha certa).",
+    "source": [
+      "PACKAGE BODY PKG_DYNAMIC_EVALUATOR IS",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "",
+      "  PROCEDURE AVALIAR (p_id_entidade IN NUMBER) IS",
+      "    v_sql VARCHAR2(4000);",
+      "    v_resultado VARCHAR2(4000);",
+      "  BEGIN",
+      "    v_sql := 'BEGIN pkg_helper.montar_resultado(:1, :2); END;';",
+      "", "", "",
+      "    EXECUTE IMMEDIATE v_sql USING OUT v_resultado, IN p_id_entidade;",
+      "  END AVALIAR;",
+      "END PKG_DYNAMIC_EVALUATOR;"
+    ],
+    "line": 73,
+    "expect": {
+      "exec_kind": "EXECUTE_IMMEDIATE",
+      "categoria_provada": "BLOCO_OU_RETURNING",
+      "pode_invocar_procedure": true,
+      "pode_invocar_procedure_determinavel": true,
+      "into_arity": null,
+      "em_loop": false
+    }
+  }
+}

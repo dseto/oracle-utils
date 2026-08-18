@@ -1,0 +1,14 @@
+{
+  "feature_id": "T-03",
+  "contract": "dynsql-dossie",
+  "desc": "Quando a montagem do SQL passa por uma funcao, o mapa so entra nela se o resultado for unico; caso contrario declara a funcao e para",
+  "files": [
+    "plsqlflow/dynsite_template.py",
+    "tests/test_dynsite_travessia.py",
+    "docs/backlog-sql-dinamico-estatico.md"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_travessia.py -q",
+  "recorded_at": "2026-08-18T01:34:49.291337+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:c1068c416aa468e2d4e2be87bf24945d89fcf403cb2152b01e2fd1dbf6b22e10"
+}

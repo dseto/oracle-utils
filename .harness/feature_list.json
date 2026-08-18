@@ -1,6 +1,6 @@
 {
   "contract": "dynsql-dossie",
-  "compiled_at": "2026-08-17T13:50:13.206690+00:00",
+  "compiled_at": "2026-08-18T01:34:43.895971+00:00",
   "compiled_with_version": "0.35.0",
   "stop_conditions": {
     "typed": [],
@@ -20,12 +20,14 @@
       "files": [
         "plsqlflow/dynsite.py",
         "tests/test_dynsite_categoria.py",
-        "tests/fixtures/dynsite_formas.json"
+        "tests/fixtures/dynsite_formas.json",
+        "AGENTS.md",
+        ".harness/work/dynsql-dossie/Plans.md"
       ],
       "verify_cmd": "pytest tests/test_dynsite_categoria.py -q",
       "depends": [],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-02",
@@ -39,21 +41,22 @@
         "T-01"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-03",
       "desc": "Quando a montagem do SQL passa por uma funcao, o mapa so entra nela se o resultado for unico; caso contrario declara a funcao e para",
       "files": [
         "plsqlflow/dynsite_template.py",
-        "tests/test_dynsite_travessia.py"
+        "tests/test_dynsite_travessia.py",
+        "docs/backlog-sql-dinamico-estatico.md"
       ],
       "verify_cmd": "pytest tests/test_dynsite_travessia.py -q",
       "depends": [
         "T-02"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-04",
@@ -67,7 +70,7 @@
         "T-02"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-05",
@@ -84,7 +87,7 @@
         "T-04"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-06",
@@ -100,7 +103,7 @@
         "T-05"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     },
     {
       "id": "T-07",
@@ -116,7 +119,7 @@
         "T-06"
       ],
       "cwd": null,
-      "passes": false
+      "passes": true
     }
   ]
 }

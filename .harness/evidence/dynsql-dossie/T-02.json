@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-02",
+  "contract": "dynsql-dossie",
+  "desc": "O texto do SQL montado em runtime passa a aparecer reconstruido, com os pedacos conhecidos, os que faltam e os que so entram sob condicao",
+  "files": [
+    "plsqlflow/dynsite_template.py",
+    "tests/test_dynsite_template.py"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_template.py -q",
+  "recorded_at": "2026-08-18T01:34:50.197834+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:f153c5ba9697777452884a2eaf8f7fd8d237fd95a5ad9416a79588825a186450"
+}
