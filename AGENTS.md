@@ -27,6 +27,12 @@
     consultar `harness budget --feature <id>` e obedecer o veredito —
     autocorrigir e re-rodar só enquanto ele disser `continue`; em qualquer
     parada, usar o campo `escalation` da saída pronto, sem escrever à mão.
+    **Se o que trava é uma AÇÃO HUMANA** (editar o plano de controle,
+    instalar ferramenta, fornecer credencial), nada disso se aplica: a
+    parede é a mesma na tentativa 1 e na 21. NÃO repita a tentativa —
+    declare `harness block <id> --needs "a ação concreta que cabe à
+    pessoa"` (com `--watch <path>` se houver arquivo esperado), siga para
+    outra fatia, e deixe `harness unblock` para quem fez a ação.
 11. Registrar a prova (evidência da verificação bem-sucedida).
 12. Atualizar `.harness/progress.md` com o estado atual.
 13. Marcar a feature concluída em `feature_list.json`.

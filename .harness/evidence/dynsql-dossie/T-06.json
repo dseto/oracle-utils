@@ -1,0 +1,13 @@
+{
+  "feature_id": "T-06",
+  "contract": "dynsql-dossie",
+  "desc": "O dossie passa a ser gravado em duas formas -- uma para maquina e uma legivel derivada dela -- com a chave pronta para a analise seguinte",
+  "files": [
+    "plsqlflow/dynsite_render.py",
+    "tests/test_dynsite_dossie.py"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_dossie.py -q",
+  "recorded_at": "2026-08-17T14:59:49.434788+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:cf127e094d024e2b0f4dc1c4ce9c80797ffebf3502abbba2c8945e9d8d96b272"
+}

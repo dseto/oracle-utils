@@ -1,0 +1,16 @@
+{
+  "feature_id": "T-01",
+  "contract": "dynsql-dossie",
+  "desc": "Cada ponto de SQL dinamico passa a declarar que tipo de comando ele obrigatoriamente e, com a prova, incluindo as formas que a amostra nao tinha",
+  "files": [
+    "plsqlflow/dynsite.py",
+    "tests/test_dynsite_categoria.py",
+    "tests/fixtures/dynsite_formas.json",
+    "AGENTS.md",
+    ".harness/work/dynsql-dossie/Plans.md"
+  ],
+  "verify_cmd": "pytest tests/test_dynsite_categoria.py -q",
+  "recorded_at": "2026-08-18T01:34:47.871192+00:00",
+  "exit_code": 0,
+  "files_hash": "sha256:0d082af228985a7454284cc4a80509b5c667598ba76f52bf5fbf942cdde1bfc9"
+}

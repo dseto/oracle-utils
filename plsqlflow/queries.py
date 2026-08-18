@@ -32,6 +32,11 @@ QUERY_NAMES = (
     # T-02): usada pela atribuicao por subprograma (attribute.py, T-01) e
     # pela BFS de subprogramas (procgraph.py, T-03).
     "plscope_tree_batch.sql",
+    # Inverso de deps_direct_batch.sql (contrato dynsql-dossie, T-05): quem
+    # DEPENDE de um conjunto de objetos, em grao objeto. Usada como
+    # sinalizador de chamadores fora do fechamento do mapa para lacunas de
+    # SQL dinamico com origem PARAMETRO_FORMAL (dynsite_origin.py).
+    "dependentes_batch.sql",
 )
 
 

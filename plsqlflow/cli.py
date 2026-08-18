@@ -32,7 +32,9 @@ acima de uma raiz, ver `depgraph_main`/`build_depgraph_arg_parser`) e
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -40,8 +42,23 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import oracledb
 
-from . import db, depgraph, depgraph_enrich, depgraph_render, extract, procgraph, procgraph_render, report, resolve
+from . import (
+    db,
+    depgraph,
+    depgraph_enrich,
+    depgraph_render,
+    dynsite,
+    dynsite_origin,
+    dynsite_render,
+    dynsite_template,
+    extract,
+    procgraph,
+    procgraph_render,
+    report,
+    resolve,
+)
 from .graph import RootTarget
+from .lexical import strip_comments_and_literals
 
 
 class DbExtractor:
@@ -820,6 +837,354 @@ def _flag_explicitly_passed(argv: Sequence[str], *flag_names: str) -> bool:
     return False
 
 
+# ==========================================================================
+# T-07 (contrato dynsql-dossie): monta o dossie de SQL dinamico
+# (`dynamic_sql.jsonl`/`SQL-DINAMICO.md`) para o fechamento do modo
+# `depgraph --granular`, FIANDO os 6 modulos ja prontos do contrato
+# (`dynsite.py` T-01, `dynsite_template.py` T-02/T-03, `dynsite_origin.py`
+# T-04/T-05, `dynsite_render.py` T-06) ao motor de `procgraph.py`
+# (congelado -- so leitura de `ProcGraphResult.edges`/`.nodes` aqui).
+#
+# CRITERIO EXATO de quais arestas viram sitio do dossie: o MESMO que
+# `_ProcGraphEngine.to_result` (procgraph.py, linha ~1654) usa para alimentar
+# `blind_spots` -- `edge.edge_type == "DYNAMIC_SQL" and edge.confidence in
+# ("partial", "opaque")`. Uma aresta DYNAMIC_SQL "exact" (literal 100%
+# resolvido) NUNCA vira sitio do dossie -- ja e um FATO provado, sem lacuna
+# nenhuma para documentar (mesma logica que a mantem fora de PONTOS CEGOS).
+#
+# LIMITACOES CONSCIENTES desta integracao (ver spec.md, T-07 -- reportadas
+# tambem no relatorio final da tarefa, nunca escondidas):
+#
+# 1. Travessia de funcao (T-03, `dynsite_template.resolve_gaps`) roda com
+#    `function_sources={}` -- este ponto de integracao NAO busca o
+#    codigo-fonte de OUTRAS funcoes (exigiria consulta adicional a objetos
+#    fora do fechamento imediato do sitio, fora da superficie de arquivos
+#    desta tarefa). Nenhuma lacuna com `via_funcao` e atravessada aqui; fica
+#    registrada como esta, com o motivo estrutural que T-02/T-03 ja produz.
+# 2. Procedencia de lacuna (T-04, `dynsite_origin.classify_gap_origin`) roda
+#    SEMPRE com `formal_params=[]`, `package_vars=[]`, `known_site_ids=[]`
+#    -- esta integracao nao consulta `ALL_ARGUMENTS`/PL-Scope para os
+#    parametros formais reais do subprograma nem builda a lista de
+#    variaveis de pacote (isso exigiria nova consulta ao banco, e
+#    `extract.py`/`queries.py` NAO estao na superficie de arquivos de T-07).
+#    Toda lacuna classifica `NAO_DETERMINADO` com motivo dizendo exatamente
+#    isso -- limite HONESTO desta integracao, NAO uma regressao da logica
+#    de T-04/T-05 (essa logica ja e provada por testes proprios com dados
+#    sinteticos em tests/test_dynsite_origem.py/test_dynsite_call_sites.py).
+# 3. `ProcNode.object_type` (procgraph.py, congelado) so e preenchido para
+#    `grain="object"` (fallback) -- para o caso comum de um sitio dinamico
+#    dentro de um subprograma `grain="subprogram"` (a imensa maioria), o
+#    campo e SEMPRE `None` por DESENHO do motor, nao por node ausente.
+#    "UNKNOWN" e o valor honesto usado aqui quando isso acontece (nunca
+#    inventado, documentado no relatorio final da tarefa).
+# 4. Extracao do nome da variavel montada (`var_name`, necessaria para
+#    `reconstruct_template`, T-02) so cobre o idioma comum do backlog
+#    (secao 3): identificador simples nu logo apos `OPEN ... FOR`/
+#    `EXECUTE IMMEDIATE`. Quando o texto e uma expressao mais complexa, ou
+#    o statement e `DBMS_SQL.PARSE` (que espalha string/binds em chamadas
+#    separadas -- `var_name` nao faz sentido para ele), o registro sai so
+#    com o resultado de T-01 (`classify_dynamic_site`), template/lacunas
+#    vazios e `reconstrucao="parcial"` com motivo explicito.
+# ==========================================================================
+
+_DYN_SITE_VAR_RE = re.compile(
+    r"\b(?:OPEN\s+\S+\s+FOR|EXECUTE\s+IMMEDIATE)\s+"
+    r"([A-Za-z_][A-Za-z0-9_\$#]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_\$#]*)*)"
+    r"\s*(?:;|\bINTO\b|\bUSING\b|\bBULK\b|$)",
+    re.IGNORECASE,
+)
+
+
+def _dyn_site_statement_text(source_lines: Sequence[str], line: int) -> str:
+    """Junta linhas a partir de `line` ate o primeiro `;`, sobre texto ja
+    limpo de comentario/literal (`lexical.strip_comments_and_literals`).
+    Reimplementacao PROPRIA e minima (mesmo espirito de
+    `dynsite._gather_statement_window`/`dynsite_template._gather_statement_
+    lines`, funcoes privadas de outro modulo, nao importadas aqui -- mesmo
+    padrao ja seguido por `dynsite.py`/`dynsite_template.py` entre si)."""
+    clean_lines, _literals = strip_comments_and_literals(source_lines)
+    by_line = {index + 1: text for index, text in enumerate(clean_lines)}
+    if not by_line:
+        return ""
+    max_line = max(by_line)
+    parts: List[str] = []
+    line_no = line
+    while line_no <= max_line:
+        text = by_line.get(line_no, "")
+        semi_idx = text.find(";")
+        if semi_idx != -1:
+            parts.append(text[: semi_idx + 1])
+            break
+        parts.append(text)
+        line_no += 1
+    return " ".join(parts)
+
+
+def _dyn_site_var_name(source_lines: Sequence[str], line: int) -> Optional[str]:
+    """Extrai o nome da variavel montada no sitio de SQL dinamico na linha
+    `line` (limitacao 4 da docstring da secao acima): so reconhece
+    identificador simples nu logo apos `OPEN ... FOR`/`EXECUTE IMMEDIATE`.
+    `None` quando o statement usa uma expressao mais complexa ali, ou nao
+    bate com nenhuma das duas formas (ex.: `DBMS_SQL.PARSE`) -- o chamador
+    (`_build_dynamic_sql_records`) trata `None` registrando um resultado
+    parcial so com T-01, nunca inventando uma reconstrucao."""
+    stmt_text = _dyn_site_statement_text(source_lines, line)
+    match = _DYN_SITE_VAR_RE.search(stmt_text)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def _dyn_site_source_lines(extractor: Any, owner: str, object_name: str) -> Optional[List[str]]:
+    """`extractor.source(owner, object_name)` (mesmo padrao de
+    `procgraph_access._dynamic_sql_edges`) convertido para `Sequence[str]`
+    indexado por linha (indice 0 = linha 1, convencao de
+    `dynsite.classify_dynamic_site`/`dynsite_template.reconstruct_
+    template`) -- buracos de numeracao preenchidos com `""`. `None` quando
+    o extractor nao tem a capacidade, a consulta falha, ou devolve vazio --
+    NUNCA lanca (mesma filosofia best-effort de `_dynamic_sql_edges`: falha
+    de fonte degrada para NAO_DETERMINAVEL no dossie, nunca derruba a
+    geracao do grafo inteiro).
+
+    `FetchSourceRow.text` (ALL_SOURCE real) vem com `\\n` final por linha
+    (mesma convencao que `dynsql.py`/`procgraph_access.py` ja consomem) --
+    mas `dynsite.py`/`dynsite_template.py` (T-01/T-02, verificado contra os
+    proprios fixtures de `tests/test_dynsite_categoria.py`/`tests/test_
+    dynsite_template.py`) esperam linha SEM newline final: `reconstruct_
+    template` detecta o `;` que fecha uma atribuicao com `rhs_text.
+    endswith(";")`, que falharia (nunca bateria) se sobrasse um `\\n` depois
+    do `;`. Por isso o newline final de CADA linha e removido aqui, na
+    fronteira de conversao -- unico lugar desta integracao que sabe as DUAS
+    convencoes (fonte real com `\\n`, modulos T-01/T-02 sem)."""
+    if extractor is None or not hasattr(extractor, "source"):
+        return None
+    try:
+        rows = list(extractor.source(owner, object_name) or [])
+    except Exception:
+        return None
+    if not rows:
+        return None
+    max_line = max((row.line for row in rows if row.line and row.line >= 1), default=0)
+    if max_line <= 0:
+        return None
+    lines = [""] * max_line
+    for row in rows:
+        if row.line and row.line >= 1:
+            lines[row.line - 1] = (row.text or "").rstrip("\r\n")
+    return lines
+
+
+def _dyn_site_fingerprint(source_lines: Sequence[str]) -> str:
+    """Mesmo calculo de `dynsite_render._source_fingerprint` (funcao
+    privada de outro modulo, reimplementada aqui em vez de importada --
+    mesmo padrao do resto do contrato dynsql-dossie), usado SO pelos dois
+    caminhos de registro parcial abaixo (`_dyn_site_record_no_source`/
+    `_dyn_site_record_no_template`) que nao passam por `dynsite_render.
+    build_record` (o unico lugar que calcularia isso pelo caminho normal)."""
+    joined = "\n".join(source_lines)
+    digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    return "sha256:{}".format(digest)
+
+
+def _dyn_site_record_no_source(
+    owner: str, object_name: str, object_type: str, subprogram: str, line: int
+) -> "dynsite_render.DynSiteRecord":
+    """Sitio SEM fonte disponivel (extractor sem capacidade `source`,
+    consulta falhou, ou fonte vazia) -- ainda tem que aparecer no dossie
+    (backlog secao 12, decisao 1: "vazio e declarado, nunca ausente" vale
+    por sitio, nao so pelo dossie inteiro). Nunca lanca, nunca some."""
+    site_id = "{}.{}.{}#{}".format(owner, object_name, subprogram, line)
+    motivo = (
+        "codigo-fonte indisponivel (extractor sem capacidade source, ou "
+        "consulta falhou/devolveu vazio) -- categoria, template e lacunas "
+        "nao puderam ser calculados nesta integracao (T-07, contrato "
+        "dynsql-dossie)"
+    )
+    return dynsite_render.DynSiteRecord(
+        site_id=site_id,
+        owner=owner,
+        object_name=object_name,
+        object_type=object_type,
+        subprogram=subprogram,
+        line=line,
+        exec_form="",
+        categoria_provada="NAO_DETERMINAVEL",
+        categoria_prova=motivo,
+        pode_invocar_procedure=True,
+        into_arity=None,
+        em_loop=False,
+        variavel_montada="",
+        reconstrucao="parcial",
+        reconstrucao_motivo=motivo,
+        template=[],
+        lacunas=[],
+        chave_correlacao=None,
+        source_fingerprint="indisponivel",
+        sanitizacao_ausente=[],
+    )
+
+
+def _dyn_site_record_no_template(
+    owner: str,
+    object_name: str,
+    object_type: str,
+    subprogram: str,
+    source_lines: Sequence[str],
+    form: "dynsite.DynSiteForm",
+) -> "dynsite_render.DynSiteRecord":
+    """Fonte disponivel e T-01 (`classify_dynamic_site`) rodou, mas
+    `_dyn_site_var_name` nao achou um identificador simples nu (limitacao 4
+    da docstring da secao acima) -- `reconstruct_template` (T-02) nao roda
+    sem `var_name`. Registro sai so com o resultado de T-01: template/
+    lacunas vazios, `reconstrucao="parcial"` com motivo explicito (nunca
+    finge reconstrucao completa que nao rodou)."""
+    site_id = "{}.{}.{}#{}".format(owner, object_name, subprogram, form.line)
+    motivo = (
+        "variavel montada nao identificada como identificador simples nu no "
+        "texto do statement (expressao mais complexa, ou DBMS_SQL.PARSE que "
+        "espalha string/binds em chamadas separadas) -- reconstruct_template "
+        "(T-02) nao roda sem var_name; so o resultado de T-01 (classify_"
+        "dynamic_site) esta disponivel neste registro"
+    )
+    return dynsite_render.DynSiteRecord(
+        site_id=site_id,
+        owner=owner,
+        object_name=object_name,
+        object_type=object_type,
+        subprogram=subprogram,
+        line=form.line,
+        exec_form=form.exec_kind,
+        categoria_provada=form.categoria_provada,
+        categoria_prova=form.categoria_prova,
+        pode_invocar_procedure=form.pode_invocar_procedure,
+        into_arity=form.into_arity,
+        em_loop=form.em_loop,
+        variavel_montada="",
+        reconstrucao="parcial",
+        reconstrucao_motivo=motivo,
+        template=[],
+        lacunas=[],
+        chave_correlacao=None,
+        source_fingerprint=_dyn_site_fingerprint(source_lines),
+        sanitizacao_ausente=[],
+    )
+
+
+def _build_dynamic_sql_records(
+    result: procgraph.ProcGraphResult, extractor: Any
+) -> List["dynsite_render.DynSiteRecord"]:
+    """Monta os registros do dossie de SQL dinamico (T-07) para TODA aresta
+    de `result.edges` que bate o criterio exato de `blind_spots`
+    (`edge_type == "DYNAMIC_SQL" and confidence in ("partial", "opaque")`,
+    procgraph.py linha ~1654) -- ver docstring da secao acima para as
+    limitacoes conscientes desta integracao (travessia de funcao, origem de
+    lacuna sem PL/Scope de parametros, object_type de node subprograma,
+    extracao de var_name)."""
+    nodes_by_ref = {procgraph_render.node_ref(n): n for n in result.nodes}
+    records: List[dynsite_render.DynSiteRecord] = []
+
+    for edge in result.edges:
+        if edge.edge_type != "DYNAMIC_SQL" or edge.confidence not in ("partial", "opaque"):
+            continue
+
+        # from_ref e SEMPRE OWNER.OBJETO.SUBPROGRAMA (3 partes, ver
+        # `procgraph_access._dynamic_sql_edges`: `from_ref = _ref(owner,
+        # object_name, subprogram)`) -- subprogram pode carregar "." de
+        # aninhamento (ex.: OUTER.INNER), entao split limitado a 2 cortes
+        # (plsqlflow/attribute.py, mesma convencao de ref usada la).
+        parts = edge.from_ref.split(".", 2)
+        if len(parts) != 3:
+            # Defensivo, nunca deveria acontecer dado o formato acima --
+            # "pular silenciosamente" violaria a regra do contrato ("vazio
+            # e declarado, nunca ausente"), entao NUNCA pulamos por conta
+            # disso: sem forma valida de from_ref simplesmente nao ha como
+            # montar owner/object_name/subprogram, e sem eles nao ha
+            # DynSiteRecord possivel (os tres campos sao obrigatorios) --
+            # este `continue` so protege contra um from_ref que o proprio
+            # motor (congelado) nunca produz.
+            continue
+        owner, object_name, subprogram = parts
+
+        node = nodes_by_ref.get(edge.from_ref)
+        if node is not None and node.object_type:
+            object_type = node.object_type
+        else:
+            # Limitacao 3 (docstring da secao acima): ProcNode so carrega
+            # object_type para grain="object" (fallback) -- para o caso
+            # comum (grain="subprogram"), o campo e sempre None por DESENHO
+            # do motor (procgraph.py, congelado), nao por node ausente.
+            object_type = "UNKNOWN"
+
+        if edge.line is None:
+            records.append(
+                _dyn_site_record_no_source(owner, object_name, object_type, subprogram, 0)
+            )
+            continue
+        line = edge.line
+
+        source_lines = _dyn_site_source_lines(extractor, owner, object_name)
+        if source_lines is None:
+            records.append(
+                _dyn_site_record_no_source(owner, object_name, object_type, subprogram, line)
+            )
+            continue
+
+        try:
+            form = dynsite.classify_dynamic_site(source_lines, line)
+        except ValueError:
+            # Linha nao reconhecida como sitio reconhecivel (nao deveria
+            # acontecer -- o proprio PL/Scope ja marcou esta linha como
+            # statement dinamico -- mas `classify_dynamic_site` levanta em
+            # vez de adivinhar, mesmo tratamento defensivo do resto deste
+            # modulo): registro NAO_DETERMINAVEL declarado, nunca omitido.
+            records.append(
+                _dyn_site_record_no_source(owner, object_name, object_type, subprogram, line)
+            )
+            continue
+
+        var_name = _dyn_site_var_name(source_lines, line)
+        if var_name is None:
+            records.append(
+                _dyn_site_record_no_template(
+                    owner, object_name, object_type, subprogram, source_lines, form
+                )
+            )
+            continue
+
+        template = dynsite_template.reconstruct_template(source_lines, line, var_name)
+        # Limitacao 1 (docstring da secao acima): sem codigo-fonte de OUTRAS
+        # funcoes disponivel nesta integracao, `function_sources={}` --
+        # nenhuma lacuna com via_funcao e atravessada, comportamento honesto
+        # (nao e bug), documentado em reconstrucao_motivo por T-02/T-03.
+        template = dynsite_template.resolve_gaps(template, function_sources={})
+
+        # Limitacao 2 (docstring da secao acima): sem ALL_ARGUMENTS/PL-Scope
+        # de parametros formais/variaveis de pacote nesta integracao, toda
+        # lacuna classifica NAO_DETERMINADO com motivo especifico (a propria
+        # `classify_gap_origin` produz esse motivo quando as listas vem
+        # vazias -- ver dynsite_origin.py).
+        origins: Dict[str, dynsite_origin.LacunaOrigin] = {
+            gap.ref: dynsite_origin.classify_gap_origin(
+                gap, formal_params=[], package_vars=[], known_site_ids=[]
+            )
+            for gap in template.gaps
+        }
+
+        record = dynsite_render.build_record(
+            owner=owner,
+            object_name=object_name,
+            object_type=object_type,
+            subprogram=subprogram,
+            source_lines=source_lines,
+            form=form,
+            template=template,
+            origins=origins,
+        )
+        records.append(record)
+
+    return records
+
+
 def _depgraph_granular_main(args: argparse.Namespace, argv: List[str]) -> int:
     """Corpo do modo `--granular` (T-08). Espelha a estrutura de
     `depgraph_main` (parse de alvo -> conecta -> valida raiz -> constroi
@@ -897,6 +1262,15 @@ def _depgraph_granular_main(args: argparse.Namespace, argv: List[str]) -> int:
                 dep_extractor=dep_extractor,
                 stop_schemas=stop_schemas,
             )
+
+            # T-07 (contrato dynsql-dossie): monta o dossie de SQL dinamico
+            # AQUI DENTRO do escopo de conexao -- `_build_dynamic_sql_records`
+            # chama `proc_extractor.source()` (mesma conexao), que precisa
+            # estar viva. Fazer isso depois do `finally: conn.close()` abaixo
+            # quebraria toda busca de fonte (silenciosamente degradaria todo
+            # sitio para NAO_DETERMINAVEL -- correto por construcao, mas
+            # nunca o resultado pretendido).
+            dynamic_sql_records = _build_dynamic_sql_records(result, proc_extractor)
         finally:
             conn.close()
     except db.ConnectionConfigError as exc:
@@ -923,7 +1297,7 @@ def _depgraph_granular_main(args: argparse.Namespace, argv: List[str]) -> int:
     }
 
     try:
-        procgraph_render.render_graph(result, out_dir, meta_params)
+        procgraph_render.render_graph(result, out_dir, meta_params, dynamic_sql_records=dynamic_sql_records)
     except procgraph_render.CoverageError as exc:
         print(
             "erro: reconciliacao de COBERTURA nao fechou -- grafo NAO gravado -- {}".format(exc),
